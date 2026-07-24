@@ -12,12 +12,15 @@ func NewPipeline(name string, stages ...Stage) Pipeline {
 	}
 }
 
-func (p *Pipeline) Run() error {
+func (p *Pipeline) Run(input any) (any, error) {
+	current := input
+
 	for _, stage := range p.stages {
-		err := stage.Run()
+		output, err := stage.Run(current)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		current = output
 	}
-	return nil
+	return current, nil
 }

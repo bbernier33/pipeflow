@@ -12,12 +12,14 @@ func NewStage(name string, steps ...Step) Stage {
 	}
 }
 
-func (s *Stage) Run() error {
+func (s *Stage) Run(input any) (any, error) {
+	current := input
 	for _, step := range s.steps {
-		err := step.Run()
+		output, err := step.Run(current)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		current = output
 	}
-	return nil
+	return current, nil
 }
