@@ -1,11 +1,18 @@
 package pipeflow
 
 type Step struct {
-	name string
+	name   string
+	action func() error
+	count  int
 }
 
-func NewStep(name string) Step {
+func NewStep(name string, action func() error) Step {
 	return Step{
-		name: name,
+		name:   name,
+		action: action,
 	}
+}
+
+func (s *Step) Run() error {
+	return s.action()
 }
