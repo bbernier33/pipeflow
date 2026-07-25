@@ -2,23 +2,22 @@ package pipeflow
 
 type Stage struct {
 	name  string
-	steps []Step
+	items []StageItem
 }
 
-func NewStage(name string, steps ...Step) Stage {
+func NewStage(name string, items ...StageItem) Stage {
 	return Stage{
 		name:  name,
-		steps: steps,
+		items: items,
 	}
 }
 
 func (s *Stage) Run(ctx *Context, input any) (any, error) {
 	ctx.Logger().Info("starting stage: " + s.name)
-
 	current := input
-	for _, step := range s.steps {
-		ctx.setCurrentStep(step.name)
-		output, err := step.Run(ctx, current)
+
+	for _, item := range s.items {
+		output, err := item.Run(ctx, current)
 		if err != nil {
 			ctx.Logger().Error("stage failed: " + s.name)
 			return nil, err
