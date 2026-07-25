@@ -12,10 +12,10 @@ func NewStage(name string, steps ...Step) Stage {
 	}
 }
 
-func (s *Stage) Run(input any) (any, error) {
+func (s *Stage) Run(ctx *Context, input any) (any, error) {
 	current := input
 	for _, step := range s.steps {
-		output, err := step.Run(current)
+		output, err := step.Run(ctx, current)
 		if err != nil {
 			return nil, err
 		}

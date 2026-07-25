@@ -8,12 +8,12 @@ import (
 func TestStepRunExecutesActionAndReturnsOutput(t *testing.T) {
 	executed := false
 
-	step := NewStep("Test", func(input any) (any, error) {
+	step := NewStep("Test", func(ctx *Context, input any) (any, error) {
 		executed = true
 		return input, nil
 	})
-
-	output, err := step.Run(5)
+	ctx := NewContext()
+	output, err := step.Run(ctx, 5)
 
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
@@ -31,11 +31,12 @@ func TestStepRunExecutesActionAndReturnsOutput(t *testing.T) {
 func TestStepRunReturnsActionError(t *testing.T) {
 	expected := errors.New("boom")
 
-	step := NewStep("Fail", func(input any) (any, error) {
+	step := NewStep("Fail", func(ctx *Context, input any) (any, error) {
 		return nil, expected
 	})
 
-	_, err := step.Run(5)
+	ctx := NewContext()
+	_, err := step.Run(ctx, 5)
 
 	if err != expected {
 		t.Errorf("expected error %v, got %v", expected, err)
