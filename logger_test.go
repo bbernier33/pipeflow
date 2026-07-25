@@ -33,6 +33,7 @@ func TestStepLogsExecution(t *testing.T) {
 
 	expected := []string{
 		"INFO: Running step: Test Step",
+		"INFO: completed step: Test Step",
 	}
 
 	if len(logger.Messages) != len(expected) {
