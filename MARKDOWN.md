@@ -6,6 +6,24 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ---
 
+## [v0.4.0] - 2026-07-25
+
+### Added
+
+#### Concurrent Execution
+
+- Added `ConcurrentSteps` execution primitive.
+- Added concurrent step execution within a stage.
+- Added comprehensive `ConcurrentSteps` test suite.
+
+### Changed
+
+- Introduced the `StageItem` abstraction.
+- Updated `Stage` to execute `StageItem`s instead of only `Step`s.
+- Updated `NewStep()` to return `*Step`.
+
+---
+
 ## [v0.3.0] - 2026-07-25
 
 ### Added
@@ -55,11 +73,12 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 #### Core Pipeline Engine
 
-- Initial Pipeflow release.
-- Sequential pipeline execution.
-- Stage abstraction.
-- Step abstraction.
-- Shared data propagation between stages.
-- Pipeline builder API.
-- Error propagation and early termination.
-- Initial test suite.
+- Sequential pipeline execution
+- Concurrent step execution
+- Pipeline → Stage → StageItem architecture
+- Shared execution context
+- Shared data propagation
+- Pipeline lifecycle hooks
+- Execution timing
+- Logging
+- Early error propagation

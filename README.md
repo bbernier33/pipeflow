@@ -38,7 +38,7 @@ Process
   │
   ▼
 Store
-
+```
 
 Without a shared structure, each project tends to reimplement:
 
@@ -56,72 +56,64 @@ Pipeflow aims to provide that reusable structure so applications can focus on th
 
 Pipeflow should be:
 
-simple to understand
-embedded directly into Go applications
-strongly typed
-easy to test
-composable
-explicit rather than magical
-useful without requiring external infrastructure
+- simple to understand
+- embedded directly into Go applications
+- strongly typed
+- easy to test
+- composable
+- explicit rather than magical
+- useful without requiring external infrastructure
 
 ## Non-Goals
 
 Pipeflow is not intended to become:
 
-a distributed workflow platform
-a scheduler
-a replacement for Airflow or Temporal
-a database-backed orchestration system
-a visual workflow designer
+- a distributed workflow platform
+- a scheduler
+- a replacement for Airflow or Temporal
+- a database-backed orchestration system
+- a visual workflow designer
 
 The project should remain focused on in-process application pipelines.
 
 ## Architecture
 
-The initial model is:
+Pipeflow is organized as:
 
 Pipeline
 │
 ├── Context
-│   ├── Shared Values
-│   ├── Logger
-│   ├── Status
-│   ├── Current Stage
-│   ├── Current Step
-│   └── Timing
 │
 └── Stages
-    ├── Step
-    ├── Step
+    ├── StageItem
+    │   ├── Step
+    │   └── ConcurrentSteps
+    │          ├── Step
+    │          ├── Step
+    │          └── Step
     └── ...
 
 A pipeline executes stages in order.
 
-A stage contains one or more steps.
+A stage contains one or more StageItems.
 
-Steps operate on shared, strongly typed pipeline data.
+StageItems may be individual Steps or ConcurrentSteps groups.
 
 ```go
-ctx := pipeflow.NewContext()
-
 pipeline := pipeflow.NewPipeline(
     "Example",
     pipeflow.NewStage(
-        "Stage One",
-        pipeflow.NewStep("Print", func(ctx *pipeflow.Context, input any) (any, error) {
-            fmt.Println("Hello Pipeflow")
-            return input, nil
-        }),
+        "Gather",
+
+        pipeflow.NewConcurrentSteps(
+            pipeflow.NewStep("Users", fetchUsers),
+            pipeflow.NewStep("Orders", fetchOrders),
+            pipeflow.NewStep("Products", fetchProducts),
+        ),
+
+        pipeflow.NewStep("Merge", mergeResults),
     ),
 )
-
-_, err := pipeline.Run(ctx, nil)
-if err != nil {
-    log.Fatal(err)
-}
-
-fmt.Println(ctx.Status())
-fmt.Println(ctx.Duration())
 ```
 
 The execution context exposes runtime metadata such as:
@@ -144,18 +136,17 @@ pipeline.OnCompleted(func(event pipeflow.PipelineEvent) {
         event.Context.Duration(),
     )
 })
+```
 
 ## Current Features
 
 - Sequential pipeline execution
-- Pipeline → Stage → Step architecture
+- Concurrent step execution
+- Pipeline → Stage → StageItem architecture
 - Shared execution context
-- Data propagation between stages and steps
-- Pluggable logger interface
-- Default logger implementation
-- Execution lifecycle tracking
-- Execution timing
 - Pipeline lifecycle hooks
+- Execution timing
+- Logging
 
 
 ## Roadmap
@@ -163,17 +154,15 @@ pipeline.OnCompleted(func(event pipeflow.PipelineEvent) {
 ### Completed
 
 - [x] Sequential execution
+- [x] Concurrent step execution
 - [x] Shared execution context
-- [x] Data propagation
 - [x] Logging
 - [x] Execution lifecycle
-- [x] Execution timing
 - [x] Pipeline lifecycle hooks
 
 ### Planned
 
 - [ ] Retry policies
-- [ ] Parallel execution
 - [ ] Cancellation
 - [ ] Metrics
 - [ ] Typed pipelines (Generics)
