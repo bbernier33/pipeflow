@@ -12,6 +12,13 @@ Pipeflow is currently in the early design and learning phase.
 
 The API is not stable yet, and the project is not ready for production use.
 
+
+## Installation
+
+```bash
+go get github.com/bbernier33/pipeflow
+
+
 ## Motivation
 
 Many applications follow a similar structure:
@@ -44,7 +51,7 @@ concurrency
 
 Pipeflow aims to provide that reusable structure so applications can focus on their domain logic.
 
-Design goals
+## Design goals
 
 Pipeflow should be:
 
@@ -55,7 +62,8 @@ easy to test
 composable
 explicit rather than magical
 useful without requiring external infrastructure
-Non-goals
+
+## Non-Goals
 
 Pipeflow is not intended to become:
 
@@ -67,21 +75,101 @@ a visual workflow designer
 
 The project should remain focused on in-process application pipelines.
 
-Planned architecture
+## Architecture
 
 The initial model is:
 
 Pipeline
-  │
-  ├── Stage
-  │     ├── Step
-  │     └── Step
-  │
-  └── Stage
-        └── Step
+│
+├── Context
+│   ├── Shared Values
+│   ├── Logger
+│   ├── Status
+│   ├── Current Stage
+│   ├── Current Step
+│   └── Timing
+│
+└── Stages
+    ├── Step
+    ├── Step
+    └── ...
 
 A pipeline executes stages in order.
 
 A stage contains one or more steps.
 
 Steps operate on shared, strongly typed pipeline data.
+
+```go
+ctx := pipeflow.NewContext()
+
+pipeline := pipeflow.NewPipeline(
+    "Example",
+    pipeflow.NewStage(
+        "Stage One",
+        pipeflow.NewStep("Print", func(ctx *pipeflow.Context, input any) (any, error) {
+            fmt.Println("Hello Pipeflow")
+            return input, nil
+        }),
+    ),
+)
+
+_, err := pipeline.Run(ctx, nil)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println(ctx.Status())
+fmt.Println(ctx.Duration())
+```
+The execution context exposes runtime metadata such as:
+
+- execution status
+- current stage
+- current step
+- execution duration
+
+## Current Features
+
+- Sequential pipeline execution
+- Pipeline → Stage → Step architecture
+- Shared execution context
+- Data propagation between stages and steps
+- Pluggable logger interface
+- Default logger implementation
+- Execution lifecycle tracking
+  - Pending
+  - Running
+  - Completed
+  - Failed
+- Execution timing
+  - Start time
+  - End time
+  - Duration
+
+## Roadmap
+
+### Completed
+
+- [x] Sequential execution
+- [x] Shared execution context
+- [x] Data propagation
+- [x] Logging
+- [x] Execution lifecycle
+- [x] Execution timing
+
+### Planned
+
+- [ ] Hooks / Events
+- [ ] Retry policies
+- [ ] Parallel execution
+- [ ] Cancellation
+- [ ] Metrics
+- [ ] Typed pipelines (Generics)
+
+
+## Philosophy
+
+Pipeflow favors explicit, readable workflows over configuration-heavy or magical abstractions.
+
+The library aims to provide reusable execution primitives while leaving business logic entirely in the hands of the application.
