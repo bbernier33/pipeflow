@@ -6,18 +6,19 @@ The goal is to make it easier to structure processing applications as a clear se
 
 Pipeflow is also a long-term learning project for exploring Go through the development of a real reusable library.
 
-## Project status
+## Project Status
 
-Pipeflow is currently in the early design and learning phase.
+Pipeflow is an early-stage open-source library under active development.
 
-The API is not stable yet, and the project is not ready for production use.
+The public API is evolving and may change between minor releases while the project approaches its first stable (v1.0.0) release.
 
+The library is functional but is not yet recommended for production workloads.
 
 ## Installation
 
 ```bash
 go get github.com/bbernier33/pipeflow
-
+```
 
 ## Motivation
 
@@ -122,12 +123,27 @@ if err != nil {
 fmt.Println(ctx.Status())
 fmt.Println(ctx.Duration())
 ```
+
 The execution context exposes runtime metadata such as:
 
 - execution status
 - current stage
 - current step
 - execution duration
+
+
+## Hooks
+
+Pipeflow provides lifecycle hooks that allow applications to react to pipeline execution without modifying business logic.
+
+```go
+pipeline.OnCompleted(func(event pipeflow.PipelineEvent) {
+    fmt.Printf(
+        "%s completed in %s\n",
+        event.Name,
+        event.Context.Duration(),
+    )
+})
 
 ## Current Features
 
@@ -138,14 +154,9 @@ The execution context exposes runtime metadata such as:
 - Pluggable logger interface
 - Default logger implementation
 - Execution lifecycle tracking
-  - Pending
-  - Running
-  - Completed
-  - Failed
 - Execution timing
-  - Start time
-  - End time
-  - Duration
+- Pipeline lifecycle hooks
+
 
 ## Roadmap
 
@@ -157,10 +168,10 @@ The execution context exposes runtime metadata such as:
 - [x] Logging
 - [x] Execution lifecycle
 - [x] Execution timing
+- [x] Pipeline lifecycle hooks
 
 ### Planned
 
-- [ ] Hooks / Events
 - [ ] Retry policies
 - [ ] Parallel execution
 - [ ] Cancellation
