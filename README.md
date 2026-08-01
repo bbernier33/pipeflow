@@ -138,15 +138,34 @@ pipeline.OnCompleted(func(event pipeflow.PipelineEvent) {
 })
 ```
 
+## Retry Policies
+
+Steps can optionally retry failed executions using `WithRetry`.
+
+```go
+step := pipeflow.NewStep(
+    "Fetch Users",
+    fetchUsers,
+    pipeflow.WithRetry(pipeflow.RetryPolicy{
+        MaxAttempts: 3,
+        Delay:       500 * time.Millisecond,
+    }),
+)
+```
+
+
 ## Current Features
 
 - Sequential pipeline execution
 - Concurrent step execution
+- Configurable step retry policies
 - Pipeline → Stage → StageItem architecture
 - Shared execution context
+- Shared data propagation
 - Pipeline lifecycle hooks
 - Execution timing
 - Logging
+- Early error propagation
 
 
 ## Roadmap
@@ -159,10 +178,10 @@ pipeline.OnCompleted(func(event pipeflow.PipelineEvent) {
 - [x] Logging
 - [x] Execution lifecycle
 - [x] Pipeline lifecycle hooks
+- [x] Retry policies
 
 ### Planned
 
-- [ ] Retry policies
 - [ ] Cancellation
 - [ ] Metrics
 - [ ] Typed pipelines (Generics)

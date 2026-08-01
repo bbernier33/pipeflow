@@ -6,6 +6,26 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ---
 
+## [v0.5.0] - 2026-08-01
+
+### Added
+
+#### Step Retry Policies
+
+- Added configurable retry policies for steps.
+- Added `RetryPolicy` with configurable `MaxAttempts` and `Delay`.
+- Added `WithRetry` step option.
+- Added fixed-delay retries for failed step executions.
+- Added retry lifecycle logging.
+- Added tests for retry success, exhaustion, and immediate success.
+
+### Changed
+
+- Updated `Step` execution to support optional retry policies.
+- Steps without a retry policy continue to execute once by default.
+
+---
+
 ## [v0.4.0] - 2026-07-25
 
 ### Added
