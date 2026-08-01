@@ -115,7 +115,7 @@ func TestContextTracksCompletedExecution(t *testing.T) {
 	}
 }
 
-func TestCongtextTracksFailedExecution(t *testing.T) {
+func TestContextTracksFailedExecution(t *testing.T) {
 	ctx := NewContext()
 
 	ctx.markStarted()

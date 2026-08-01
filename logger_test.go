@@ -33,7 +33,7 @@ func TestStepLogsExecution(t *testing.T) {
 
 	expected := []string{
 		"INFO: Running step: Test Step",
-		"INFO: completed step: Test Step",
+		"INFO: Completed step: Test Step",
 	}
 
 	if len(logger.Messages) != len(expected) {
@@ -69,7 +69,7 @@ func TestStepLogsError(t *testing.T) {
 
 	expectedMessages := []string{
 		"INFO: Running step: Test Step",
-		"ERROR: step failed: Test Step",
+		"ERROR: Step Test Step failed after 1 attempt(s)",
 	}
 
 	if len(logger.Messages) != len(expectedMessages) {
