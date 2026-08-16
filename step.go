@@ -1,19 +1,20 @@
 package pipeflow
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
 
 type Step struct {
 	name        string
-	action      func(*Context, any) (any, error)
+	action      func(context.Context, *Context, any) (any, error)
 	retryPolicy *RetryPolicy
 }
 
 func NewStep(
 	name string,
-	action func(*Context, any) (any, error),
+	action func(context.Context, *Context, any) (any, error),
 	options ...StepOption,
 ) *Step {
 	step := &Step{
@@ -28,7 +29,7 @@ func NewStep(
 	return step
 }
 
-func (s *Step) Run(ctx *Context, input any) (any, error) {
+func (s *Step) Run(goCtx context.Context, ctx *Context, input any) (any, error) {
 	ctx.Logger().Info("Running step: " + s.name)
 
 	maxAttempts := 1
@@ -46,7 +47,13 @@ func (s *Step) Run(ctx *Context, input any) (any, error) {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		output, err := s.action(ctx, input)
+		select {
+		case <-goCtx.Done():
+			return nil, goCtx.Err()
+		default:
+		}
+
+		output, err := s.action(goCtx, ctx, input)
 
 		if err == nil {
 			ctx.Logger().Info("Completed step: " + s.name)
@@ -67,7 +74,11 @@ func (s *Step) Run(ctx *Context, input any) (any, error) {
 			)
 
 			if delay > 0 {
-				time.Sleep(delay)
+				select {
+				case <-time.After(delay):
+				case <-goCtx.Done():
+					return nil, goCtx.Err()
+				}
 			}
 		}
 	}

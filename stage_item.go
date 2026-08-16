@@ -1,5 +1,7 @@
 package pipeflow
 
+import "context"
+
 type StageItem interface {
-	Run(ctx *Context, input any) (any, error)
+	Run(goCtx context.Context, ctx *Context, input any) (any, error)
 }

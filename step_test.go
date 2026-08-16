@@ -1,6 +1,7 @@
 package pipeflow
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -8,12 +9,14 @@ import (
 func TestStepRunExecutesActionAndReturnsOutput(t *testing.T) {
 	executed := false
 
-	step := NewStep("Test", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	step := NewStep("Test", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executed = true
 		return input, nil
 	})
 	ctx := NewContext()
-	output, err := step.Run(ctx, 5)
+	output, err := step.Run(goCtx, ctx, 5)
 
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
@@ -31,12 +34,14 @@ func TestStepRunExecutesActionAndReturnsOutput(t *testing.T) {
 func TestStepRunReturnsActionError(t *testing.T) {
 	expected := errors.New("boom")
 
-	step := NewStep("Fail", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	step := NewStep("Fail", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		return nil, expected
 	})
 
 	ctx := NewContext()
-	_, err := step.Run(ctx, 5)
+	_, err := step.Run(goCtx, ctx, 5)
 
 	if err != expected {
 		t.Errorf("expected error %v, got %v", expected, err)
@@ -47,7 +52,9 @@ func TestStepRunRetriesUntilSuccess(t *testing.T) {
 	attempts := 0
 	expected := errors.New("temporary failure")
 
-	step := NewStep("Retry", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	step := NewStep("Retry", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		attempts++
 
 		if attempts < 3 {
@@ -60,7 +67,7 @@ func TestStepRunRetriesUntilSuccess(t *testing.T) {
 	}),
 	)
 	ctx := NewContext()
-	output, err := step.Run(ctx, nil)
+	output, err := step.Run(goCtx, ctx, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -77,7 +84,9 @@ func TestStepRunReturnErrorAfterRetryExhaustion(t *testing.T) {
 	attempts := 0
 	expected := errors.New("persistent failure")
 
-	step := NewStep("RetryFail", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	step := NewStep("RetryFail", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		attempts++
 		return nil, expected
 	}, WithRetry(RetryPolicy{
@@ -85,7 +94,7 @@ func TestStepRunReturnErrorAfterRetryExhaustion(t *testing.T) {
 	}))
 
 	ctx := NewContext()
-	_, err := step.Run(ctx, nil)
+	_, err := step.Run(goCtx, ctx, nil)
 
 	if err != expected {
 		t.Errorf("expected error %v, got %v", expected, err)
@@ -98,7 +107,9 @@ func TestStepRunReturnErrorAfterRetryExhaustion(t *testing.T) {
 func TestStepRunDoesNotRetryAfterSuccess(t *testing.T) {
 	attempts := 0
 
-	step := NewStep("NoRetry", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	step := NewStep("NoRetry", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		attempts++
 		return "success", nil
 	}, WithRetry(RetryPolicy{
@@ -106,7 +117,7 @@ func TestStepRunDoesNotRetryAfterSuccess(t *testing.T) {
 	}))
 
 	ctx := NewContext()
-	_, err := step.Run(ctx, nil)
+	_, err := step.Run(goCtx, ctx, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)

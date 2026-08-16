@@ -1,6 +1,7 @@
 package pipeflow
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -8,24 +9,25 @@ import (
 
 func TestConcurrentStepsReturnsResultsInDeclaredOrder(t *testing.T) {
 	ctx := NewContext()
+	goCtx := context.Background()
 
 	first := NewStep(
 		"first",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			return "first-result", nil
 		},
 	)
 
 	second := NewStep(
 		"second",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			return "second-result", nil
 		},
 	)
 
 	group := NewConcurrentSteps(first, second)
 
-	output, err := group.Run(ctx, "input")
+	output, err := group.Run(goCtx, ctx, "input")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -47,11 +49,14 @@ func TestConcurrentStepsReturnsResultsInDeclaredOrder(t *testing.T) {
 
 func TestConcurrentStepsPassesSameInputToEveryStep(t *testing.T) {
 	ctx := NewContext()
+
+	goCtx := context.Background()
+
 	expectedInput := "shared-input"
 
 	first := NewStep(
 		"first",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			if input != expectedInput {
 				t.Errorf("first step received %v, expected %v", input, expectedInput)
 			}
@@ -61,7 +66,7 @@ func TestConcurrentStepsPassesSameInputToEveryStep(t *testing.T) {
 
 	second := NewStep(
 		"second",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			if input != expectedInput {
 				t.Errorf("second step received %v, expected %v", input, expectedInput)
 			}
@@ -71,7 +76,7 @@ func TestConcurrentStepsPassesSameInputToEveryStep(t *testing.T) {
 
 	group := NewConcurrentSteps(first, second)
 
-	_, err := group.Run(ctx, expectedInput)
+	_, err := group.Run(goCtx, ctx, expectedInput)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -80,12 +85,15 @@ func TestConcurrentStepsPassesSameInputToEveryStep(t *testing.T) {
 
 func TestConcurrentStepStartsStepsConcurrently(t *testing.T) {
 	ctx := NewContext()
+
+	goCtx := context.Background()
+
 	started := make(chan string, 2)
 	release := make(chan struct{})
 
 	first := NewStep(
 		"first",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			started <- "first"
 			<-release
 			return "first-result", nil
@@ -93,8 +101,8 @@ func TestConcurrentStepStartsStepsConcurrently(t *testing.T) {
 	)
 
 	second := NewStep(
-		"first",
-		func(ctx *Context, input any) (any, error) {
+		"second",
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			started <- "second"
 			<-release
 			return "second-result", nil
@@ -105,7 +113,7 @@ func TestConcurrentStepStartsStepsConcurrently(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := group.Run(ctx, nil)
+		_, err := group.Run(goCtx, ctx, nil)
 		done <- err
 	}()
 
@@ -126,22 +134,24 @@ func TestConcurrentStepStartsStepsConcurrently(t *testing.T) {
 func TestConcurrentStepsReturnsSetpError(t *testing.T) {
 	ctx := NewContext()
 
+	goCtx := context.Background()
+
 	expectedErr := errors.New("Step failed")
 	successfulStep := NewStep(
 		"successful",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			return "success", nil
 		},
 	)
 	failingStep := NewStep(
 		"failing",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			return nil, expectedErr
 		},
 	)
 
 	group := NewConcurrentSteps(successfulStep, failingStep)
-	output, err := group.Run(ctx, nil)
+	output, err := group.Run(goCtx, ctx, nil)
 
 	if err == nil {
 		t.Fatal("expected an error, got nil")
@@ -157,25 +167,27 @@ func TestConcurrentStepsReturnsSetpError(t *testing.T) {
 func TestConcurrentStepsJoinsMultipleErrors(t *testing.T) {
 	ctx := NewContext()
 
+	goCtx := context.Background()
+
 	firstErr := errors.New("first failure")
 	secondErr := errors.New("second failure")
 
 	first := NewStep(
 		"first",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			return nil, firstErr
 		},
 	)
 	second := NewStep(
 		"second",
-		func(ctx *Context, input any) (any, error) {
+		func(goCtx context.Context, ctx *Context, input any) (any, error) {
 			return nil, secondErr
 		},
 	)
 
 	group := NewConcurrentSteps(first, second)
 
-	_, err := group.Run(ctx, nil)
+	_, err := group.Run(goCtx, ctx, nil)
 
 	if err == nil {
 		t.Fatal("expected an error, got nit")
@@ -190,9 +202,12 @@ func TestConcurrentStepsJoinsMultipleErrors(t *testing.T) {
 
 func TestConcurrentStepsWithNoStepsReturnsEmptyResults(t *testing.T) {
 	ctx := NewContext()
+
+	goCtx := context.Background()
+
 	group := NewConcurrentSteps()
 
-	output, err := group.Run(ctx, nil)
+	output, err := group.Run(goCtx, ctx, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

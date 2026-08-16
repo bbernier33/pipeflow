@@ -1,9 +1,14 @@
 package pipeflow
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestPiplelineStartedHookRuns(t *testing.T) {
 	ctx := NewContext()
+
+	goCtx := context.Background()
 
 	pipeline := NewPipeline("Test Pipeline")
 
@@ -32,7 +37,7 @@ func TestPiplelineStartedHookRuns(t *testing.T) {
 
 	})
 
-	_, err := pipeline.Run(ctx, nil)
+	_, err := pipeline.Run(goCtx, ctx, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

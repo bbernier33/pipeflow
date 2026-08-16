@@ -1,6 +1,7 @@
 package pipeflow
 
 import (
+	"context"
 	"errors"
 	"sync"
 )
@@ -15,7 +16,7 @@ func NewConcurrentSteps(steps ...*Step) *ConcurrentSteps {
 	}
 }
 
-func (c *ConcurrentSteps) Run(ctx *Context, input any) (any, error) {
+func (c *ConcurrentSteps) Run(goCtx context.Context, ctx *Context, input any) (any, error) {
 	results := make([]any, len(c.steps))
 	errs := make([]error, len(c.steps))
 
@@ -26,7 +27,7 @@ func (c *ConcurrentSteps) Run(ctx *Context, input any) (any, error) {
 		go func(index int, currentStep *Step) {
 			defer wg.Done()
 
-			result, err := currentStep.Run(ctx, input)
+			result, err := currentStep.Run(goCtx, ctx, input)
 			results[index] = result
 			errs[index] = err
 		}(i, step)

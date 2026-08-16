@@ -1,6 +1,7 @@
 package pipeflow
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -32,12 +33,14 @@ func TestContextGetMissingKey(t *testing.T) {
 func TestPipelineSharesContextAcressSteps(t *testing.T) {
 	ctx := NewContext()
 
-	stepOne := NewStep("Set Value", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	stepOne := NewStep("Set Value", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		ctx.Set("count", 10)
 		return input, nil
 	})
 
-	stepTwo := NewStep("Get Value", func(ctx *Context, input any) (any, error) {
+	stepTwo := NewStep("Get Value", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		value, exists := ctx.Get("count")
 
 		if !exists {
@@ -52,7 +55,7 @@ func TestPipelineSharesContextAcressSteps(t *testing.T) {
 
 	pipeline := NewPipeline("Pipeline", stageOne, stageTwo)
 
-	output, err := pipeline.Run(ctx, nil)
+	output, err := pipeline.Run(goCtx, ctx, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)

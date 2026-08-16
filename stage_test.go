@@ -1,6 +1,7 @@
 package pipeflow
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -8,12 +9,14 @@ import (
 func TestStageRunExecutesStepsInOrder(t *testing.T) {
 	executionOrder := []string{}
 
-	stepOne := NewStep("Step One", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	stepOne := NewStep("Step One", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step One")
 		return input.(int) + 1, nil
 	})
 
-	stepTwo := NewStep("Step Two", func(ctx *Context, input any) (any, error) {
+	stepTwo := NewStep("Step Two", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step Two")
 		return input.(int) * 2, nil
 	})
@@ -22,7 +25,7 @@ func TestStageRunExecutesStepsInOrder(t *testing.T) {
 
 	ctx := NewContext()
 
-	output, err := stage.Run(ctx, 5)
+	output, err := stage.Run(goCtx, ctx, 5)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -49,17 +52,19 @@ func TestStageRunStopsAfterStepError(t *testing.T) {
 	executionOrder := []string{}
 	expectedError := errors.New("step failed")
 
-	stepOne := NewStep("Step One", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	stepOne := NewStep("Step One", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step One")
 		return input, nil
 	})
 
-	stepTwo := NewStep("Step Two", func(ctx *Context, input any) (any, error) {
+	stepTwo := NewStep("Step Two", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step Two")
 		return nil, expectedError
 	})
 
-	stepThree := NewStep("Step Three", func(ctx *Context, input any) (any, error) {
+	stepThree := NewStep("Step Three", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step Three")
 		return input, nil
 	})
@@ -67,7 +72,7 @@ func TestStageRunStopsAfterStepError(t *testing.T) {
 	stage := NewStage("Test Stage", stepOne, stepTwo, stepThree)
 	ctx := NewContext()
 
-	_, err := stage.Run(ctx, 5)
+	_, err := stage.Run(goCtx, ctx, 5)
 
 	if err != expectedError {
 		t.Errorf("expected error %v, got %v", expectedError, err)

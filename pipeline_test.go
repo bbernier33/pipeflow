@@ -1,6 +1,7 @@
 package pipeflow
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -8,12 +9,14 @@ import (
 func TestPipelineRunExecutesStagesInOrder(t *testing.T) {
 	executionOrder := []string{}
 
-	stepOne := NewStep("Step One", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	stepOne := NewStep("Step One", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step One")
 		return input.(int) + 1, nil
 	})
 
-	stepTwo := NewStep("Step Two", func(ctx *Context, input any) (any, error) {
+	stepTwo := NewStep("Step Two", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step Two")
 		return input.(int) * 2, nil
 	})
@@ -25,7 +28,7 @@ func TestPipelineRunExecutesStagesInOrder(t *testing.T) {
 
 	ctx := NewContext()
 
-	output, err := pipeline.Run(ctx, 5)
+	output, err := pipeline.Run(goCtx, ctx, 5)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -52,17 +55,19 @@ func TestPipelineRunStopsAfterStageError(t *testing.T) {
 	executionOrder := []string{}
 	expectedError := errors.New("step failed")
 
-	stepOne := NewStep("Step One", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	stepOne := NewStep("Step One", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step One")
 		return input, nil
 	})
 
-	stepTwo := NewStep("Step Two", func(ctx *Context, input any) (any, error) {
+	stepTwo := NewStep("Step Two", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step Two")
 		return nil, expectedError
 	})
 
-	stepThree := NewStep("Step Three", func(ctx *Context, input any) (any, error) {
+	stepThree := NewStep("Step Three", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		executionOrder = append(executionOrder, "Step Three")
 		return input, nil
 	})
@@ -74,7 +79,7 @@ func TestPipelineRunStopsAfterStageError(t *testing.T) {
 	pipeline := NewPipeline("Pipeline", stageOne, stageTwo, stageThree)
 
 	ctx := NewContext()
-	_, err := pipeline.Run(ctx, 5)
+	_, err := pipeline.Run(goCtx, ctx, 5)
 
 	if err != expectedError {
 		t.Errorf("expected error %v, got %v", expectedError, err)

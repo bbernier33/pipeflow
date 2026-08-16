@@ -1,6 +1,7 @@
 package pipeflow
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -21,11 +22,13 @@ func TestStepLogsExecution(t *testing.T) {
 	logger := &TestLogger{}
 	ctx := NewContextWithLogger(logger)
 
-	step := NewStep("Test Step", func(ctx *Context, input any) (any, error) {
+	goCtx := context.Background()
+
+	step := NewStep("Test Step", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		return input, nil
 	})
 
-	_, err := step.Run(ctx, nil)
+	_, err := step.Run(goCtx, ctx, nil)
 
 	if err != nil {
 		t.Fatal(err)
@@ -55,13 +58,15 @@ func TestStepLogsError(t *testing.T) {
 	logger := &TestLogger{}
 	ctx := NewContextWithLogger(logger)
 
+	goCtx := context.Background()
+
 	expected := errors.New("boom")
 
-	step := NewStep("Test Step", func(ctx *Context, input any) (any, error) {
+	step := NewStep("Test Step", func(goCtx context.Context, ctx *Context, input any) (any, error) {
 		return nil, expected
 	})
 
-	_, err := step.Run(ctx, nil)
+	_, err := step.Run(goCtx, ctx, nil)
 
 	if err != expected {
 		t.Fatal("expected error")
