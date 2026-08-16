@@ -6,6 +6,21 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ---
 
+## [v0.6.0] - 2026-08-15
+
+### Added
+
+#### Cancellation Support
+
+- Added Go `context.Context` to pipeline execution.
+- Added cancellation context propagation through `Pipeline`, `Stage`, `StageItem`, `ConcurrentSteps`, and `Step`.
+- Updated step actions to receive `context.Context`.
+- Added cancellation-aware retry delays.
+- Added cancellation checks before retry attempts.
+- Added support for propagating `context.Canceled` and `context.DeadlineExceeded`.
+
+---
+
 ## [v0.5.0] - 2026-08-01
 
 ### Added

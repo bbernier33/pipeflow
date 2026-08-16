@@ -166,6 +166,7 @@ step := pipeflow.NewStep(
 - Execution timing
 - Logging
 - Early error propagation
+- Cancellation support using Go `context.Context`
 
 
 ## Roadmap
@@ -179,10 +180,10 @@ step := pipeflow.NewStep(
 - [x] Execution lifecycle
 - [x] Pipeline lifecycle hooks
 - [x] Retry policies
+- [x] Cancellation with Go `context.Context`
 
 ### Planned
 
-- [ ] Cancellation
 - [ ] Metrics
 - [ ] Typed pipelines (Generics)
 
