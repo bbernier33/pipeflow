@@ -25,7 +25,7 @@ func TestConcurrentStepsReturnsResultsInDeclaredOrder(t *testing.T) {
 		},
 	)
 
-	group := NewConcurrentSteps(first, second)
+	group := NewConcurrentSteps([]*Step{first, second})
 
 	output, err := group.Run(goCtx, ctx, "input")
 	if err != nil {
@@ -74,7 +74,7 @@ func TestConcurrentStepsPassesSameInputToEveryStep(t *testing.T) {
 		},
 	)
 
-	group := NewConcurrentSteps(first, second)
+	group := NewConcurrentSteps([]*Step{first, second})
 
 	_, err := group.Run(goCtx, ctx, expectedInput)
 	if err != nil {
@@ -109,7 +109,7 @@ func TestConcurrentStepStartsStepsConcurrently(t *testing.T) {
 		},
 	)
 
-	group := NewConcurrentSteps(first, second)
+	group := NewConcurrentSteps([]*Step{first, second})
 
 	done := make(chan error, 1)
 	go func() {
@@ -150,7 +150,7 @@ func TestConcurrentStepsReturnsSetpError(t *testing.T) {
 		},
 	)
 
-	group := NewConcurrentSteps(successfulStep, failingStep)
+	group := NewConcurrentSteps([]*Step{successfulStep, failingStep})
 	output, err := group.Run(goCtx, ctx, nil)
 
 	if err == nil {
@@ -185,7 +185,7 @@ func TestConcurrentStepsJoinsMultipleErrors(t *testing.T) {
 		},
 	)
 
-	group := NewConcurrentSteps(first, second)
+	group := NewConcurrentSteps([]*Step{first, second})
 
 	_, err := group.Run(goCtx, ctx, nil)
 
@@ -205,7 +205,7 @@ func TestConcurrentStepsWithNoStepsReturnsEmptyResults(t *testing.T) {
 
 	goCtx := context.Background()
 
-	group := NewConcurrentSteps()
+	group := NewConcurrentSteps([]*Step{})
 
 	output, err := group.Run(goCtx, ctx, nil)
 	if err != nil {

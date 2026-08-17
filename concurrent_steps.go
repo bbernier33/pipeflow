@@ -7,13 +7,29 @@ import (
 )
 
 type ConcurrentSteps struct {
-	steps []*Step
+	steps         []*Step
+	failurePolicy FailurePolicy
 }
 
-func NewConcurrentSteps(steps ...*Step) *ConcurrentSteps {
-	return &ConcurrentSteps{
-		steps: steps,
+type ConcurrentStepsOption func(*ConcurrentSteps)
+
+func WithFailurePolicy(policy FailurePolicy) ConcurrentStepsOption {
+	return func(c *ConcurrentSteps) {
+		c.failurePolicy = policy
 	}
+}
+
+func NewConcurrentSteps(steps []*Step, options ...ConcurrentStepsOption) *ConcurrentSteps {
+	concurrent := &ConcurrentSteps{
+		steps:         steps,
+		failurePolicy: WaitAll,
+	}
+
+	for _, option := range options {
+		option(concurrent)
+	}
+
+	return concurrent
 }
 
 func (c *ConcurrentSteps) Run(goCtx context.Context, ctx *Context, input any) (any, error) {
