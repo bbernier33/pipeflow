@@ -6,6 +6,44 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ---
 
+## [v0.7.0] - 2026-08-17
+
+### Added
+
+#### Concurrent Execution Failure Policies
+
+- Added configurable failure policies for `ConcurrentSteps`.
+- Added `FailurePolicy`.
+- Added `WaitAll` failure policy.
+- Added `FailFast` failure policy.
+- Added `WithFailurePolicy(...)` concurrent-step option.
+- Added fail-fast sibling cancellation using Go `context.Context`.
+- Added tests covering concurrent failure-policy behavior.
+
+### Changed
+
+- `WaitAll` is the default `ConcurrentSteps` failure policy, preserving previous concurrent execution behavior.
+- `NewConcurrentSteps(...)` now accepts a `[]*Step` followed by optional `ConcurrentStepsOption` values.
+- Concurrent result ordering remains based on step declaration order rather than completion order.
+
+### Behavior
+
+#### WaitAll
+
+- All concurrent steps are allowed to finish.
+- Errors from failed steps are collected.
+- Multiple errors are combined using `errors.Join(...)`.
+
+#### FailFast
+
+- The first step failure triggers cancellation of the concurrent group.
+- Sibling steps receive the cancellation signal through `context.Context`.
+- Running goroutines are not forcibly terminated; cancellation remains cooperative.
+- The original triggering failure remains the primary failure rather than being replaced by sibling cancellation errors.
+
+
+---
+
 ## [v0.6.0] - 2026-08-15
 
 ### Added
