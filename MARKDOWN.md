@@ -6,6 +6,38 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ---
 
+## [v0.8.0] - 2026-08-18
+
+### Added
+
+#### Bounded Concurrent Execution
+
+- Added configurable worker limits for `ConcurrentSteps`.
+- Added `WithMaxWorkers(...)`.
+- Added bounded execution of concurrent steps.
+- Added cancellation-aware worker capacity acquisition.
+- Added integration between bounded concurrency and `FailFast`.
+- Added tests covering single-worker execution, configurable worker limits, unlimited default execution, cancellation, and fail-fast queued work.
+
+### Behavior
+
+#### Worker Limits
+
+- `WithMaxWorkers(n)` limits a `ConcurrentSteps` group to at most `n` actively executing steps when `n > 0`.
+- Values less than or equal to zero preserve unlimited concurrent execution.
+- Unlimited concurrency remains the default when no worker limit is configured.
+- Worker capacity is acquired before additional step goroutines are started.
+- Result ordering remains based on step declaration order rather than execution or completion order.
+
+#### Cancellation
+
+- Work waiting for execution capacity respects Go `context.Context` cancellation.
+- With `FailFast`, a step failure cancels the concurrent group.
+- Work still waiting for worker capacity is not started after fail-fast cancellation.
+- Already-running steps receive the cancellation signal and remain responsible for cooperative cancellation.
+
+---
+
 ## [v0.7.0] - 2026-08-17
 
 ### Added
@@ -144,14 +176,26 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ### Added
 
-#### Core Pipeline Engine
+## Current Features
 
+- Pipeline → Stage → StageItem execution model
 - Sequential pipeline execution
 - Concurrent step execution
-- Pipeline → Stage → StageItem architecture
+- Bounded concurrent execution with configurable worker limits
+- Cancellation-aware worker capacity
+- Concurrent failure policies
+  - `WaitAll`
+  - `FailFast`
+- `FailFast` cancellation of queued bounded work
+- Deterministic concurrent result ordering
 - Shared execution context
 - Shared data propagation
+- Go `context.Context` propagation
+- Cancellation support
+- Configurable step retry policies
+- Cancellation-aware retry delays
 - Pipeline lifecycle hooks
+- Execution status
 - Execution timing
 - Logging
-- Early error propagation
+- Error propagation

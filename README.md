@@ -280,6 +280,44 @@ C ─────────────►
 
 Cancellation remains cooperative: already-running goroutines must observe their `context.Context` to stop early.
 
+### Bounded Concurrency
+
+Concurrent execution can optionally be limited using `WithMaxWorkers`.
+
+```go
+group := pipeflow.NewConcurrentSteps(
+    []*pipeflow.Step{
+        stepA,
+        stepB,
+        stepC,
+        stepD,
+    },
+    pipeflow.WithMaxWorkers(2),
+)
+```
+
+With a worker limit of `2`, Pipeflow executes at most two steps from the concurrent group at the same time.
+
+```text
+A ────────►
+B ─────►
+              C ───────►
+              D ─────►
+```
+
+A positive worker limit provides bounded concurrency.
+
+When `WithMaxWorkers(...)` is not configured, or the configured value is less than or equal to zero, concurrency remains unlimited to preserve the default behavior of `ConcurrentSteps`.
+
+Worker capacity is acquired before starting additional step goroutines. This prevents large concurrent groups from creating an unbounded number of goroutines waiting for execution capacity.
+
+Queued work respects Go context cancellation.
+
+When bounded concurrency is combined with `FailFast`, a step failure cancels the concurrent group and prevents work still waiting for capacity from starting.
+
+Result ordering remains based on step declaration order regardless of worker limits or execution order.
+
+
 ## Retry Policies
 
 Steps can optionally retry failed executions using `WithRetry`.
@@ -356,10 +394,11 @@ Pipeflow is currently strengthening its core execution guarantees before the pub
 - [x] Retry policies
 - [x] Go context / cancellation
 - [x] Concurrent execution failure policies
+- [x] Bounded concurrency / worker limits
+
 
 ### Production Core
 
-- [ ] Bounded concurrency / worker limits
 - [ ] Step, stage, and pipeline timeouts
 - [ ] Structured execution errors
 - [ ] Stage and step lifecycle hooks
