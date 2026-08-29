@@ -43,7 +43,7 @@ func TestStepRunReturnsActionError(t *testing.T) {
 	ctx := NewContext()
 	_, err := step.Run(goCtx, ctx, 5)
 
-	if err != expected {
+	if !errors.Is(err, expected) {
 		t.Errorf("expected error %v, got %v", expected, err)
 	}
 }
@@ -96,7 +96,7 @@ func TestStepRunReturnErrorAfterRetryExhaustion(t *testing.T) {
 	ctx := NewContext()
 	_, err := step.Run(goCtx, ctx, nil)
 
-	if err != expected {
+	if !errors.Is(err, expected) {
 		t.Errorf("expected error %v, got %v", expected, err)
 	}
 	if attempts != 3 {

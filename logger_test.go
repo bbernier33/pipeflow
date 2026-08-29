@@ -68,7 +68,7 @@ func TestStepLogsError(t *testing.T) {
 
 	_, err := step.Run(goCtx, ctx, nil)
 
-	if err != expected {
+	if !errors.Is(err, expected) {
 		t.Fatal("expected error")
 	}
 

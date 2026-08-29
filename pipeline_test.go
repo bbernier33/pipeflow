@@ -81,7 +81,7 @@ func TestPipelineRunStopsAfterStageError(t *testing.T) {
 	ctx := NewContext()
 	_, err := pipeline.Run(goCtx, ctx, 5)
 
-	if err != expectedError {
+	if !errors.Is(err, expectedError) {
 		t.Errorf("expected error %v, got %v", expectedError, err)
 	}
 

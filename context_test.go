@@ -96,7 +96,9 @@ func TestNewContextHasNoExecutionTiming(t *testing.T) {
 func TestContextTracksCompletedExecution(t *testing.T) {
 	ctx := NewContext()
 
-	ctx.markStarted()
+	if err := ctx.markStarted(); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(time.Millisecond)
 	ctx.markCompleted()
 
@@ -121,7 +123,9 @@ func TestContextTracksCompletedExecution(t *testing.T) {
 func TestContextTracksFailedExecution(t *testing.T) {
 	ctx := NewContext()
 
-	ctx.markStarted()
+	if err := ctx.markStarted(); err != nil {
+		t.Fatal(err)
+	}
 	ctx.markFailed()
 
 	if ctx.Status() != StatusFailed {

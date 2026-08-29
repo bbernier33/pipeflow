@@ -14,6 +14,10 @@ The library is functional, but the public API may change between minor releases 
 
 Pipeflow is not yet recommended as a production dependency.
 
+Contributors working on concurrency should run `go test -race ./...`. Windows
+setup and the validated MSYS2 UCRT64 command are documented in
+[Windows Race Testing](adr/RaceTestingWindows.md).
+
 ## Installation
 
 ```bash
@@ -108,41 +112,162 @@ A `StageItem` can currently be:
 
 ```go
 pipeline := pipeflow.NewPipeline(
-    "Example",
+    "Orders",
     pipeflow.NewStage(
-        "Gather",
-
-        pipeflow.NewConcurrentSteps(
-            []*pipeflow.Step{
-                pipeflow.NewStep("Users", fetchUsers),
-                pipeflow.NewStep("Orders", fetchOrders),
-                pipeflow.NewStep("Products", fetchProducts),
-            },
-        ),
-
-        pipeflow.NewStep("Merge", mergeResults),
+        "Prepare",
+        pipeflow.NewStep("Load", func() (Order, error) {
+            return loadOrder()
+        }),
+        pipeflow.NewStep("Audit", func(order Order) error {
+            return auditOrder(order)
+        }),
+        pipeflow.NewStep("Price", func(order Order) (Invoice, error) {
+            return priceOrder(order)
+        }),
     ),
 )
+
+invoice, err := pipeline.Run(context.Background())
 ```
 
-A merge step is not required after `ConcurrentSteps`.
+Step return values flow naturally through the pipeline: a step's output is the
+next step's input, a stage's final output is the next stage's input, and the
+last stage's output is returned by `Pipeline.Run`.
 
-The concurrent group waits according to its configured execution policy and returns its outputs. Subsequent aggregation or transformation is performed explicitly by later steps only when required by the application.
+Ordinary step functions can use these signatures:
+
+```go
+func() error
+func() (T, error)
+func(T) error
+func(T) (U, error)
+```
+
+An error-only function preserves the value already in the flow. This makes
+validation, logging, persistence, and other side effects natural pass-through
+steps. Function errors stop sequential execution and remain discoverable with
+`errors.Is` after Pipeflow adds execution-location information.
+
+Pipeflow validates statically knowable adjacent Step types before execution.
+The actual initial input is checked during preflight, before a Run ID is
+created, hooks fire, or workload code begins.
+
+Call `pipeline.Validate()` explicitly when configuration-time validation is
+useful. Use `pipeline.ValidateInput(input)` when the initial value is already
+available. `Run` and `Start` perform both structure and input-aware validation
+automatically.
+
+## Pre-execution Validation
+
+Validation recursively covers Pipeline, Stage, ConcurrentSteps, Parallel,
+Branch, and Subflow definitions. It checks:
+
+- ordinary Step signatures and policy callback signatures;
+- statically knowable adjacent value types and the actual initial input;
+- nil execution units;
+- empty and duplicate identifiers within their immediate scope;
+- negative worker limits and invalid failure policies;
+- retry, polling, condition, rate-limit, timeout, and result-metadata policy
+  configuration already defined by those APIs;
+- conflicting shared rate-limit policies.
+
+```go
+if err := pipeline.Validate(); err != nil {
+    // Definition is invalid independently of an initial value.
+}
+
+if err := pipeline.ValidateInput(order); err != nil {
+    // The definition or initial value flow is invalid.
+}
+```
+
+`Validate()` deliberately leaves a first typed consumer unresolved when no
+input type is knowable. `ValidateInput()` resolves that boundary, including Go
+nil assignability. Legacy `any` StageItems make subsequent flow dynamically
+typed, so compatibility after them remains a runtime check.
+
+Names are unique only within the scope where they identify report and
+operational children: sibling Stages, top-level Steps within a Stage, sibling
+Parallels/Subflows, Branches within a Parallel, and Steps within a Branch. A
+Subflow definition can therefore be reused in different parent Stages.
+
+Validation returns before execution and produces no RunReport or lifecycle
+events. It does not invoke business functions, predicates, metadata
+extractors, hooks, backgrounds, or finalizers.
+
+Zero continues to mean unlimited workers. Negative worker counts are invalid.
+Existing documented non-positive timeout disabling and retry/polling defaults
+remain compatible.
+
+See [ADR-027](adr/PipelineValidation.md) for the Phase 19 contract.
+
+## Pipeline Introspection
+
+`Describe()` exposes the declared execution structure without starting a run:
+
+```go
+description := pipeline.Describe()
+
+fmt.Println(description.Kind, description.Name)
+for _, stage := range description.Children {
+    fmt.Println(stage.Kind, stage.Name)
+}
+
+fmt.Println(description)
+```
+
+The final line renders a Unicode tree:
+
+```text
+Invoice Processing
+├── Ingest
+│   ├── Read
+│   └── Parse
+├── Normalize
+│   ├── Clean
+│   └── Deduplicate
+└── Output
+    └── Store
+```
+
+`Description` is a uniform recursive node with `Kind`, `Name`, `Type`, and
+`Children`. Stable kinds identify Pipelines, Stages, Steps, ConcurrentSteps,
+Parallels, Branches, Subflows, custom StageItems, and invalid nil items.
+Custom StageItems expose only their Go type name because Pipeflow does not know
+their internal structure.
+
+Every call builds a fresh tree. Mutating it cannot change the Pipeline.
+Introspection is definition-only and contains no function values, policy
+callbacks, flowing data, result metadata, RunReport facts, live status, or
+execution controls. It is safe to call on an invalid definition, allowing
+tools to display structure before separately calling `Validate()`.
+
+Pipeflow provides the structure and compact text rendering only. Mermaid,
+documentation generators, CLI styling, serialization, and visual tools remain
+downstream concerns.
+
+See [ADR-028](adr/PipelineIntrospection.md) for the Phase 20 contract.
 
 ## Context
 
-Pipeflow provides a shared execution `Context` across the pipeline.
+Pipeflow provides an optional shared execution `Context` across the pipeline.
 
-It supports shared values and execution metadata such as:
+It supports shared values and compatibility execution metadata such as:
 
 - execution status
-- current stage
-- current step
 - execution duration
 
 Go's standard `context.Context` is propagated separately through execution for cancellation and deadlines.
 
-Conceptually:
+Simple pipelines do not need to create one:
+
+```go
+output, err := pipeline.Run(goCtx)
+output, err := pipeline.Run(goCtx, input)
+```
+
+Code that needs execution-wide shared values, lifecycle state, or a custom
+logger can provide a Pipeflow context using the compatibility form:
 
 ```go
 output, err := pipeline.Run(goCtx, pipeflowCtx, input)
@@ -158,10 +283,26 @@ context.Context
 
 pipeflow.Context
     shared pipeline values
-    execution metadata
-    lifecycle state
+    compatibility execution metadata
     logging
 ```
+
+`Context.Set` and `Context.Get` are safe for concurrent access by
+`ConcurrentSteps`. The map container is protected; if a stored value is itself
+mutable, callers remain responsible for synchronizing that value. Logger calls
+obtained through one Context are serialized, allowing ConcurrentSteps to share
+a logger safely.
+
+A supplied Pipeflow Context is owned by one active execution at a time.
+Overlapping use returns `ErrContextInUse`; sequential reuse remains supported.
+This avoids presenting one ambiguous status and timing record for several
+runs.
+
+`Context.CurrentStage` and `Context.CurrentStep` are deprecated compatibility
+methods. A scalar current Step cannot describe parallel execution. Use the
+run-scoped, read-only `Execution.Current()` API for structured live state.
+
+See [ADR-018](adr/ContextConcurrency.md) for the Phase 10 contract.
 
 ## Cancellation
 
@@ -181,7 +322,8 @@ Step / ConcurrentSteps
 
 This allows steps and other execution primitives to cooperate with cancellation and deadlines using standard Go semantics.
 
-Step actions receive both contexts:
+The original context-aware step adapter remains available for infrastructure
+code that genuinely needs both contexts:
 
 ```go
 step := pipeflow.NewStep(
@@ -307,7 +449,8 @@ B ─────►
 
 A positive worker limit provides bounded concurrency.
 
-When `WithMaxWorkers(...)` is not configured, or the configured value is less than or equal to zero, concurrency remains unlimited to preserve the default behavior of `ConcurrentSteps`.
+When `WithMaxWorkers(...)` is not configured, or is configured as zero,
+concurrency remains unlimited. Negative worker counts are validation errors.
 
 Worker capacity is acquired before starting additional step goroutines. This prevents large concurrent groups from creating an unbounded number of goroutines waiting for execution capacity.
 
@@ -316,6 +459,379 @@ Queued work respects Go context cancellation.
 When bounded concurrency is combined with `FailFast`, a step failure cancels the concurrent group and prevents work still waiting for capacity from starting.
 
 Result ordering remains based on step declaration order regardless of worker limits or execution order.
+
+## Structured Parallel Branches
+
+`Parallel` runs named sequential branches from the same flowing input and then
+joins their final values:
+
+```go
+providers := pipeflow.NewParallel("providers", []pipeflow.Branch{
+    pipeflow.NewBranch("gmail",
+        pipeflow.NewStep("find", findGmailAccount),
+        pipeflow.NewStep("load", loadGmailMessages),
+    ),
+    pipeflow.NewBranch("microsoft",
+        pipeflow.NewStep("find", findMicrosoftAccount),
+        pipeflow.NewStep("load", loadMicrosoftMessages),
+    ),
+})
+
+join := pipeflow.NewStep("join", func(results pipeflow.ParallelResults) ([]Message, error) {
+    gmail := results[0].Value.([]Message)
+    microsoft := results[1].Value.([]Message)
+    return append(gmail, microsoft...), nil
+})
+```
+
+Each Branch is an ordinary sequential value flow. Every Branch receives the
+same Parallel input, and its final Step output becomes that Branch's result.
+An empty Branch passes the input through unchanged.
+
+`ParallelResults` contains `BranchResult{Name, Value}` entries in Branch
+declaration order, regardless of completion order. This deterministic value is
+the Parallel item's output and can flow into the next ordinary Step.
+
+`WaitAll` is the default. It waits for every Branch and joins failures in
+declaration order. `WithParallelFailurePolicy(FailFast)` cancels sibling
+Branches cooperatively and waits for started work to stop. The first observed
+non-cancellation error remains primary.
+
+When any Branch fails, the Parallel output is nil. Successful sibling payloads
+are deliberately discarded rather than exposed as implicit partial results.
+Payload-free progress remains available in `RunReport` and `Execution.Current`.
+
+Reports use an explicit `StageReport.Parallels -> ParallelReport.Branches ->
+BranchReport.Steps` hierarchy. Errors include Parallel and Branch identity,
+and lifecycle events expose corresponding boundaries.
+
+At Parallel start, Pipeflow takes one shallow snapshot of the shared Context
+value map and gives each Branch its own Context initialized from that same
+snapshot. Branch Steps may safely use `Set` and `Get`, and sequential Steps in
+one Branch see that Branch's mutations. Siblings and the shared root Context do
+not see those mutations, and Pipeflow performs no automatic merge.
+
+Isolation stops at the map boundary. Pointers, maps, slices, and other
+referenced objects stored as values remain shared references and follow normal
+Go concurrency rules. Branch outputs through `ParallelResults` are the explicit
+business-data join; Context is not a hidden sibling communication channel.
+
+This is structured fork/join composition only. Parallel groups cannot depend
+on sibling outputs, create edges, or address arbitrary earlier nodes.
+
+See [ADR-019](adr/StructuredParallelExecution.md) for the Phase 11 contract.
+See [ADR-021](adr/ScopedBranchState.md) for the Phase 13 Context contract.
+
+## Managed Background Execution
+
+Pipeline-owned support work can run alongside the main Stage flow:
+
+```go
+pipeline = pipeline.WithBackground("lease renewal", func(ctx context.Context) error {
+    ticker := time.NewTicker(30 * time.Second)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ticker.C:
+            if err := renewLease(ctx); err != nil {
+                return err
+            }
+        case <-ctx.Done():
+            return ctx.Err()
+        }
+    }
+})
+```
+
+Background work starts before Stage execution, receives the execution's Go
+context, and does not participate in value flow. When main execution stops,
+Pipeflow cancels every Background and waits for clean shutdown before running
+Pipeline finalizers.
+
+Fatal failure is the default and cancels main execution:
+
+```go
+pipeline = pipeline.WithBackground("heartbeat", heartbeat)
+```
+
+A support process whose failure should only be reported can be non-fatal:
+
+```go
+pipeline = pipeline.WithBackground(
+    "telemetry",
+    publishTelemetry,
+    pipeflow.WithBackgroundFailurePolicy(pipeflow.BackgroundNonFatal),
+)
+```
+
+Fatal errors are wrapped as `BackgroundError` and combined in declaration
+order. Non-fatal failures appear in `RunReport.Backgrounds` but do not replace
+the flowing value or fail an otherwise successful run. Background panics become
+`PanicError` values.
+
+Cancellation returned while Pipeflow is stopping a Background after successful
+main execution is normalized to `completed`. Parent cancellation and deadlines
+remain `cancelled` or `timeout`. `Execution.Current().Backgrounds` exposes only
+read-only live state.
+
+Background functions must cooperate with context cancellation. Pipeflow waits
+for every worker and cannot forcibly stop a goroutine that ignores its context.
+This API does not create detached daemons, mutate workers through `Execution`,
+or feed background results into Pipeline value flow.
+
+See [ADR-020](adr/ManagedBackgroundExecution.md) for the Phase 12 contract.
+
+## Execution Semantics
+
+Sequential execution follows declaration order:
+
+```text
+Pipeline stages -> Stage items -> Steps
+```
+
+Each successful value becomes the next sequential input. When a Step or Stage
+fails, its parent returns a nil output and no later sequential work starts.
+Retrying Steps expose only the eventual successful value; failed-attempt values
+never enter the flow.
+
+Cancellation is checked before starting each Pipeline Stage and Stage item.
+Running user functions are not forcibly stopped. Context-aware functions must
+cooperate with Go's `context.Context` when early termination is required.
+
+Concurrent groups use these deterministic rules:
+
+- every child receives the same group input;
+- successful results are returned in declaration order, not completion order;
+- `WaitAll` waits for all started work and joins errors in declaration order;
+- `FailFast` cancels siblings on the first observed error and preserves the
+  first observed non-cancellation failure as the primary error;
+- bounded work still queued after fail-fast cancellation is not started;
+- already-running work is awaited under both policies;
+- partial results are not returned when the group fails.
+
+See [ADR-009](adr/ExecutionSemantics.md) for the complete Phase 1 contract.
+
+## Structured Execution Errors
+
+Failures that occur during execution return `*pipeflow.ExecutionError` values:
+
+```go
+type ExecutionError struct {
+    Pipeline string
+    Stage    string
+    Parallel string
+    Branch   string
+    Step     string
+    Attempt  int
+    Err      error
+}
+```
+
+Use standard Go error inspection:
+
+```go
+output, err := pipeline.Run(context.Background())
+if err != nil {
+    if errors.Is(err, context.Canceled) {
+        // The original cause remains discoverable.
+    }
+
+    var executionErr *pipeflow.ExecutionError
+    if errors.As(err, &executionErr) {
+        log.Printf(
+            "pipeline=%s stage=%s step=%s attempt=%d: %v",
+            executionErr.Pipeline,
+            executionErr.Stage,
+            executionErr.Step,
+            executionErr.Attempt,
+            executionErr.Err,
+        )
+    }
+}
+```
+
+Errors from concurrent `WaitAll` execution remain joined with `errors.Join`,
+and every branch error carries its own location. `errors.Is` searches every
+cause, while `errors.As` returns the first matching structured error in
+declaration order.
+
+Configuration and pre-run validation failures are not `ExecutionError` values
+because execution did not begin.
+
+See [ADR-010](adr/StructuredExecutionErrors.md) for the complete contract.
+
+## Run Reports
+
+Use `RunWithReport` when execution facts are needed:
+
+```go
+output, report, err := pipeline.RunWithReport(context.Background(), input)
+
+fmt.Println(report.RunID)
+fmt.Println(report.Status)
+fmt.Println(report.Duration)
+
+for _, stage := range report.Stages {
+    fmt.Println(stage.Name, stage.Status, stage.Duration)
+    for _, step := range stage.Steps {
+        fmt.Println(step.Name, step.Status, step.Duration)
+        for _, attempt := range step.Attempts {
+            fmt.Println(attempt.Attempt, attempt.Status, attempt.Duration)
+        }
+    }
+}
+```
+
+`Pipeline.Run` remains the simplest API and executes through the same reporting
+path while discarding the returned report.
+
+Every started run receives a random 128-bit hexadecimal Run ID. Reports contain
+start/end timestamps, durations, final status, structured errors, stages,
+steps, and retry attempts. Status values are:
+
+- `pending`
+- `running`
+- `completed`
+- `failed`
+- `skipped`
+- `cancelled`
+- `timeout`
+
+Stages and Steps that are not started after a failure or cancellation are
+reported as `skipped` with zero timestamps and duration. A Go deadline maps to
+`timeout`; ordinary context cancellation maps to `cancelled`. When joined
+errors include a business failure, the enclosing execution remains `failed`.
+
+Reports intentionally do not contain flowing business values. Pipeflow does
+not serialize, persist, publish, or render reports; callers decide what to do
+with the returned structured data.
+
+See [ADR-011](adr/RunReports.md) for the complete Phase 3 contract.
+
+## Result Metadata
+
+Successful Steps and Stages may attach small scalar execution facts to their
+reports without changing normal value flow:
+
+```go
+step := pipeflow.NewStep("import", importRecords,
+    pipeflow.WithResultMetadata(func(result ImportResult) pipeflow.ResultMetadata {
+        return pipeflow.ResultMetadata{
+            "records_processed": result.Count,
+            "items_rejected":    result.Rejected,
+            "source":            "gmail",
+        }
+    }),
+)
+
+stage := pipeflow.NewStage("ingest", step).
+    WithResultMetadata(func(result ImportResult) pipeflow.ResultMetadata {
+        return pipeflow.ResultMetadata{"records_processed": result.Count}
+    })
+```
+
+Extractors accept `func() ResultMetadata` or `func(T) ResultMetadata`. A Step
+extractor receives its final successful flowing result after retries and
+polling. A Stage extractor receives its final Stage output. Extractors run once
+and do not wrap, replace, retain, or otherwise change that value.
+
+Metadata is available through `StepReport.Metadata` and
+`StageReport.Metadata`. Skipped or failed work records none. Extractor input
+types are validated statically where possible and dynamically for legacy
+adapters. Invalid metadata or extractor panics fail the owning Step or Stage
+through normal structured errors.
+
+To keep this distinct from business payload retention, metadata is limited to
+64 entries. Keys are non-empty and at most 128 bytes. Values may be nil,
+strings up to 4096 bytes, booleans, integer or floating-point scalars,
+`time.Duration`, or `time.Time`. Slices, maps, pointers, arbitrary structs, and
+other payload-shaped values are rejected.
+
+The separation remains explicit:
+
+- flow data moves through ordinary Go return values;
+- result metadata contains small operational facts;
+- `RunReport` contains execution history plus those facts;
+- `State()` remains a lightweight payload- and metadata-free progress view.
+
+This phase does not introduce retained Stage business results, metadata sinks,
+serialization, automatic aggregation, indexing, metrics, or cross-Step
+communication.
+
+See [ADR-026](adr/ResultMetadata.md) for the Phase 18 contract.
+
+## Live Execution State
+
+`Pipeline.Start` begins execution asynchronously and returns a read-only,
+run-scoped handle:
+
+```go
+execution, err := pipeline.Start(context.Background(), input)
+if err != nil {
+    // Invalid configuration and setup errors are returned synchronously.
+}
+
+fmt.Println(execution.Status())
+
+current := execution.Current()
+fmt.Println(current.Pipeline, current.Status, current.Duration)
+for _, stage := range current.Stages {
+    fmt.Println(stage.Name, stage.Status, stage.Duration)
+    for _, step := range stage.Steps {
+        fmt.Println(
+            step.Name,
+            step.Status,
+            step.Duration,
+            step.Attempt,
+            step.AttemptDuration,
+        )
+    }
+}
+
+state := execution.State()
+for _, stage := range state.Stages {
+    // Includes completed, running, and pending stages.
+    fmt.Println(stage.Name, stage.Status, stage.Duration)
+}
+
+snapshot := execution.Report()
+output, finalReport, err := execution.Wait()
+```
+
+The handle provides:
+
+- `Status()` for the run's current status;
+- `Current()` for currently active Stages and Steps;
+- `State()` for the complete payload-free execution topology and status;
+- `Report()` for an immutable point-in-time `RunReport` snapshot;
+- `Done()` for integration with `select`;
+- `Wait()` for the final output, report, and error.
+
+Running durations are calculated when a snapshot is requested, using the
+timing data already collected for RunReport. Multiple concurrent Steps may be
+returned by `Current()`; Pipeflow does not reduce parallel execution to a
+misleading scalar "current step."
+
+`State()` complements that active-only projection. It returns every declared
+Stage and its Steps, Parallels, Branches, and nested Subflows in declaration
+order, including completed and pending siblings. It also contains Run ID,
+Pipeline status, backgrounds, advancing durations, and the active poll/retry
+attempt. Completed attempts are deliberately not presented as active; their
+history remains available in `Report()`.
+
+`State()` contains no flowing values, retained results, errors, hooks, or
+control methods. Each call constructs an independent snapshot from the same
+mutex-protected recorder used by `Report()`.
+
+`Pipeline` stores no mutable current or last run. Each call to `Start` owns its
+recorder, result, and completion signal. The caller owns the supplied Go
+context and can cancel it normally.
+
+This is live inspection of one Pipeline execution, not metrics exporting,
+persistence, UI rendering, or managed background-task orchestration.
+
+See [ADR-012](adr/LiveExecutionState.md) for the Phase 4 contract.
+See [ADR-025](adr/LiveProgressState.md) for the Phase 17 full-state contract.
 
 
 ## Retry Policies
@@ -329,17 +845,300 @@ step := pipeflow.NewStep(
     pipeflow.WithRetry(pipeflow.RetryPolicy{
         MaxAttempts: 3,
         Delay:       500 * time.Millisecond,
+        Backoff:     pipeflow.ExponentialBackoff,
+        MaxDelay:    5 * time.Second,
+        Jitter:      0.2,
+        RetryIf: func(err error) bool {
+            return errors.Is(err, errTemporarilyUnavailable)
+        },
     }),
 )
 ```
 
-Steps without a retry policy execute once.
+`FixedBackoff` is the default. `ExponentialBackoff` doubles `Delay` after each
+failed attempt. `MaxDelay` caps the final delay, including jitter. `Jitter` is
+a symmetric fraction from `0` to `1`; for example, `0.2` varies a delay by up
+to 20 percent in either direction. `RetryIf`, when present, can stop retrying
+an error immediately. Context cancellation and deadline errors are never
+retried and do not invoke the predicate.
 
-Retry delays cooperate with Go context cancellation.
+`MaxAttempts` counts the initial call, not only retries. Steps without a retry
+policy execute once. Each poll has an independent attempt sequence when
+polling and retry are combined.
+
+Retry delays cooperate with Go context cancellation. `AttemptReport` exposes
+the selected `RetryDelay` for every failed attempt followed by a retry, so
+backoff behavior remains observable without retaining business payloads.
+
+See [ADR-015](adr/RetryHardening.md) for the Phase 7 contract.
+
+## Rate Limiting and Throttling
+
+Rate limiting is an optional Step invocation policy:
+
+```go
+pipeflow.NewStep("charge", charge,
+    pipeflow.WithRateLimit(pipeflow.RateLimitPolicy{
+        Key:           "payments-api",
+        MaxCalls:      10,
+        Interval:      time.Second,
+        MaxConcurrent: 2,
+    }),
+)
+```
+
+`MaxCalls` and `Interval` configure a token-bucket rate with an initial burst
+up to `MaxCalls`. `MaxConcurrent` bounds simultaneously executing actions.
+Either limit may be used independently. Waiting for a token or concurrency
+slot observes the Step's Go context, timeout, and parent cancellation.
+
+The limiter applies to every actual action invocation, including retries and
+polls. A conditionally skipped Step consumes no capacity. The Step's attempt
+duration includes any throttling wait, so existing live state and reports show
+time spent waiting without adding business payloads.
+
+Limiters are execution-scoped. A non-empty `Key` shares capacity among all
+Steps using the same policy in one run, including Parallel branches and nested
+Subflows. Without a key, capacity belongs to that Step definition within the
+run. State is reset for every Pipeline execution. Conflicting policies using
+the same key are rejected by `Validate`.
+
+API-client errors can optionally implement:
+
+```go
+type RetryAfterError interface {
+    error
+    RetryAfter() time.Duration
+}
+```
+
+A positive retry-after duration postpones the shared limiter and becomes the
+minimum retry delay. It is discovered through `errors.As`, so normal wrapping
+continues to work. Pipeflow does not parse HTTP headers itself.
+
+This phase does not add distributed coordination, persistent quotas, circuit
+breakers, adaptive rates, HTTP middleware, or provider-specific behavior.
+
+See [ADR-024](adr/RateLimiting.md) for the Phase 16 contract.
+
+## Timeouts
+
+Timeouts can be applied at Step, Stage, and Pipeline scope:
+
+```go
+pipeline := pipeflow.NewPipeline(
+    "orders",
+    pipeflow.NewStage(
+        "process",
+        pipeflow.NewStep(
+            "call service",
+            callService,
+            pipeflow.WithTimeout(2*time.Second),
+        ),
+    ).WithTimeout(10*time.Second),
+).WithTimeout(30 * time.Second)
+```
+
+Each timeout is a total budget for its scope:
+
+- Step timeout includes every retry attempt and retry delay;
+- Stage timeout includes all Stage items;
+- Pipeline timeout includes the complete Pipeline run;
+- nested scopes inherit the earliest active deadline;
+- a non-positive duration disables that scope's timeout.
+
+Pipeflow implements timeouts using Go context deadlines. Cancellation is
+cooperative while user code is running: context-aware functions should stop
+when `ctx.Done()` closes. Pipeflow checks the deadline again after a function
+or custom StageItem returns, so work that ignores cancellation cannot report a
+late success, but Pipeflow cannot forcibly terminate that work while it runs.
+
+Timeout failures:
+
+- unwrap to `context.DeadlineExceeded`;
+- carry normal `ExecutionError` location and attempt information;
+- mark active Attempt, Step, Stage, Pipeline, and RunReport state as `timeout`;
+- mark work that never started as `skipped`;
+- remain distinct from parent `context.Canceled`, which is `cancelled`.
+
+`Execution.Current()` remains observation-only while a timeout approaches. It
+does not mutate deadlines or cancel individual Steps.
+
+See [ADR-013](adr/Timeouts.md) for the Phase 5 contract.
+
+## Polling / Wait Until
+
+Polling repeats a successful Step operation until an ordinary Go predicate is
+satisfied:
+
+```go
+waitForJob := pipeflow.NewStep(
+    "wait for job",
+    fetchJob,
+    pipeflow.WithPolling(pipeflow.PollPolicy{
+        Every:    time.Second,
+        MaxPolls: 20,
+        Timeout:  time.Minute,
+        Until: func(job Job) bool {
+            return job.Ready
+        },
+    }),
+)
+```
+
+The operation and predicate have separate meanings:
+
+```text
+operation error
+    -> retry policy
+
+operation success + predicate false
+    -> wait, then poll again
+
+operation success + predicate true
+    -> value continues through the Pipeline
+```
+
+Supported predicate forms are:
+
+```go
+func() bool
+func(T) bool
+```
+
+The predicate input is validated against the Step's output before execution
+where possible and at runtime for dynamically typed legacy adapters.
+
+`MaxPolls` and `Timeout` are independent limits. A non-positive `MaxPolls`
+allows polling until its predicate, context, or timeout stops it. A
+non-positive polling timeout disables that specific deadline. Negative
+intervals are treated as zero. Poll timeout inherits the earliest active
+Step, Stage, Pipeline, or parent deadline.
+
+If the predicate remains false through `MaxPolls`, the Step returns
+`ErrPollLimitExceeded`, discoverable with `errors.Is`. Cancellation and timeout
+retain their normal `cancelled` and `timeout` states.
+
+`StepReport.Polls` records per-poll timing, completion, attempts, and errors.
+`StepReport.Attempts` remains the flattened attempt history for compatibility.
+`Execution.Current()` exposes the active poll and attempt numbers without
+providing mutation or control methods.
+
+See [ADR-014](adr/Polling.md) for the Phase 6 contract.
+
+## Conditional Steps
+
+`WithCondition` runs a Step only when an ordinary Go predicate returns true:
+
+```go
+pipeflow.NewStep(
+    "send confirmation",
+    func(order Order) error { return send(order) },
+    pipeflow.WithCondition(func(order Order) bool { return order.Ready }),
+)
+```
+
+Supported predicate forms are `func() bool` and `func(T) bool`. Predicate input
+types are validated against statically known flowing types before execution
+and checked again at runtime when the prior type is dynamic.
+
+The condition is evaluated once, before polling and retry attempts. When it is
+false, the action is not called and the existing value passes through
+unchanged. This also means a conditional transformer can have two possible
+flow types: its input when skipped and its output when run. If those types
+differ, Pipeflow defers validation of following Steps to runtime and returns a
+clear type error if the selected path is incompatible.
+
+An intentionally skipped Step has `StatusSkipped`, zero timing, and no attempt
+or poll history in `RunReport`. It emits `StepSkipped`, without emitting
+`StepStarted` or a completed/failed Step event. Parent cancellation and timeout
+are checked before the predicate and still win over conditional skipping.
+
+Conditions are deliberately Step-local. This phase does not add an expression
+language, rule engine, else branches, conditional Stages, or hidden value
+communication.
+
+See [ADR-022](adr/ConditionalExecution.md) for the Phase 14 contract.
+
+## Reusable Subflows
+
+`Subflow` composes a named sequential group of Stages inside a parent Stage:
+
+```go
+prepare := pipeflow.NewSubflow("prepare-order",
+    pipeflow.NewStage("normalize", normalizeStep),
+    pipeflow.NewStage("validate", validateStep),
+)
+
+pipeline := pipeflow.NewPipeline("orders",
+    pipeflow.NewStage("process",
+        prepare,
+        pipeflow.NewStep("persist", persist),
+    ),
+)
+```
+
+The value entering a Subflow becomes its first Stage input. Each nested Stage
+passes its output to the next, and the final nested Stage output returns to the
+containing Stage. The same immutable Subflow definition can be reused.
+
+Subflows share the parent run's Run ID, Pipeflow Context, Go context,
+cancellation, and value stream. They do not create child Pipeline executions
+and cannot own backgrounds, finalizers, Pipeline hooks, or independent
+execution handles. Existing `Parallel` and `ConcurrentSteps` groups may still
+be used explicitly inside their nested Stages.
+
+`RunReport` records `StageReport.Subflows`, each containing a `SubflowReport`
+with status, timing, structured error, and nested Stage reports. `Current()`
+exposes running Subflows and their active nested work. Lifecycle hooks receive
+`SubflowStarted`, `SubflowCompleted`, or `SubflowFailed`; events produced inside
+the group carry its name in `LifecycleEvent.Subflow`.
+
+Subflows may be nested, but execution remains hierarchical and sequential.
+They add no graph edges, dependencies, implicit parallelism, cross-run state,
+or child-run control surface.
+
+See [ADR-023](adr/NestedExecutionComposition.md) for the Phase 15 contract.
 
 ## Lifecycle Hooks
 
-Pipeflow provides pipeline lifecycle hooks that allow applications to react to execution without modifying business logic.
+Pipeflow provides synchronous, observation-only lifecycle hooks for Pipeline,
+Stage, Parallel, Branch, and Step boundaries:
+
+```go
+pipeline = pipeline.WithLifecycleHook(func(event pipeflow.LifecycleEvent) {
+    fmt.Printf("%s %s/%s: %s\n",
+        event.Type, event.Stage, event.Step, event.Status)
+})
+```
+
+Events include the Run ID, Pipeline/Stage/Parallel/Branch/Step names, status,
+occurrence time, and an error where applicable. They never contain flowing
+business values and provide no execution-control methods.
+
+Lifecycle event types are:
+
+- `PipelineStarted`, `PipelineCompleted`, `PipelineFailed`, `PipelineFinalized`
+- `StageStarted`, `StageCompleted`, `StageFailed`
+- `SubflowStarted`, `SubflowCompleted`, `SubflowFailed`
+- `ParallelStarted`, `ParallelCompleted`, `ParallelFailed`
+- `BranchStarted`, `BranchCompleted`, `BranchFailed`
+- `BackgroundStarted`, `BackgroundCompleted`, `BackgroundFailed`
+- `StepStarted`, `StepCompleted`, `StepFailed`, `StepSkipped`
+
+Hooks execute in registration order for each event. They execute before the
+engine advances beyond that lifecycle boundary. Concurrent Steps may invoke
+hooks concurrently, so callback-owned state must be concurrency-safe;
+cross-Step ordering is intentionally unspecified, while each Step's start
+always precedes its terminal event.
+
+`PipelineFinalized` follows the completed or failed Pipeline event for every
+normal return, including cancellation and timeout. It is observational rather
+than a cleanup mechanism. Hooks cannot return errors. A hook panic is recovered
+as a `PanicError` and fails the owning execution boundary; registered
+finalizers still run.
+
+The original Pipeline-specific hooks remain available for compatibility:
 
 Available pipeline hooks:
 
@@ -359,6 +1158,80 @@ pipeline.OnCompleted(func(event pipeflow.PipelineEvent) {
 })
 ```
 
+See [ADR-016](adr/LifecycleHooks.md) for the Phase 8 contract.
+
+## Finalization and Cleanup
+
+Register named Pipeline finalizers for operational cleanup:
+
+```go
+pipeline = pipeline.Finally("stop worker", func(ctx context.Context, result pipeflow.Finalization) error {
+    cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+    defer cancel()
+    return stopWorker(cleanupCtx)
+})
+```
+
+Finalizers run synchronously in reverse registration order after Pipeline work
+stops and before the final Pipeline report and lifecycle events. They run after
+success, failure, cancellation, timeout, and recovered user-code panics.
+
+The cleanup context preserves parent values but deliberately detaches from the
+execution cancellation and deadline. This lets cleanup proceed after timeout;
+external calls should establish their own finite cleanup deadline as shown
+above.
+
+`Finalization` contains the Run ID, Pipeline name, and execution status/error
+before cleanup failures are added. Every finalizer receives that same immutable
+outcome. All finalizers run even when one returns an error or panics.
+
+Cleanup errors are wrapped as `CleanupError` and joined with the original error
+using `errors.Join`, preserving `errors.Is` and `errors.As`. A cleanup failure
+turns an otherwise successful run into a failed run and suppresses its output.
+`RunReport.Cleanups` records each finalizer in execution order with status and
+timing, but no business payloads.
+
+Panics from Step actions and their retry/polling callbacks become `PanicError`
+values with a captured stack. Finalizer panics also become cleanup errors and
+do not prevent remaining finalizers from running.
+
+See [ADR-017](adr/Finalization.md) for the Phase 9 contract.
+
+## Panic Policy
+
+When Pipeflow invokes user code, a panic is recovered at the nearest
+Pipeflow-owned execution boundary and converted to `*PanicError`. The error
+retains the panic value and a Go stack trace. It is then wrapped by the same
+structured location errors used for ordinary failures, so Pipeline, Stage,
+Step, Parallel Branch, Subflow, Poll, Attempt, Background, and Cleanup location
+remains available through `errors.As`.
+
+This rule covers actions, conditions, polling predicates, retry callbacks,
+metadata extractors, custom Stage items, lifecycle and legacy hooks, managed
+background work, log callbacks, and finalizers. Normal policies still apply:
+Step panics may be retried, fail-fast work cancels its siblings, non-fatal
+background work remains non-fatal, and every registered finalizer runs.
+
+The final `RunReport` records the failure but never retains the flowing business
+value. Goroutines created directly by application callbacks are outside a
+Pipeflow-owned boundary; applications remain responsible for panic handling in
+those goroutines.
+
+See [ADR-029](adr/PanicRecovery.md) for the Phase 21 contract.
+
+## Cross-feature Reliability
+
+Pipeflow's core interaction suite verifies that execution policies compose at
+their boundaries, including retry with rate-limit waiting and timeout,
+fail-fast Parallel cancellation after panic, managed Background shutdown before
+finalization, runtime type errors inside conditional Subflows, polling with
+`RetryAfter` and timeout, scoped Branch Context cancellation, and asynchronous
+panic reporting through `Execution.Wait`.
+
+These are reliability tests of the existing public contracts; Phase 22 adds no
+new execution modes or public API. See
+[ADR-030](adr/CrossFeatureReliability.md) for the tested invariants.
+
 ## Current Features
 
 - Pipeline → Stage → StageItem execution model
@@ -374,7 +1247,20 @@ pipeline.OnCompleted(func(event pipeflow.PipelineEvent) {
 - Cancellation support
 - Configurable step retry policies
 - Cancellation-aware retry delays
-- Pipeline lifecycle hooks
+- Pipeline, Stage, and Step lifecycle hooks
+- LIFO Pipeline finalization and cleanup
+- Structured parallel branches and deterministic joins
+- Managed Pipeline-owned background execution
+- Scoped, isolated Parallel Branch Context values
+- Conditional Step execution with pass-through skipping
+- Reusable sequential Subflows with nested reports
+- Run-scoped Step rate and concurrency limiting
+- Complete payload-free live execution state snapshots
+- Small scalar Step and Stage result metadata
+- Recursive input-aware pre-execution validation
+- Programmatic Pipeline definition introspection
+- Consistent panic recovery with stacks and structured execution locations
+- Cross-feature execution policy reliability coverage
 - Execution status
 - Execution timing
 - Logging
@@ -382,7 +1268,8 @@ pipeline.OnCompleted(func(event pipeflow.PipelineEvent) {
 
 ## Roadmap to v1.0
 
-Pipeflow is currently strengthening its core execution guarantees before the public API is stabilized.
+Pipeflow Core's public API is frozen for v1. Compatibility guarantees and the
+small deprecated surface are documented in [API_STABILITY.md](API_STABILITY.md).
 
 ### Completed
 
@@ -395,17 +1282,30 @@ Pipeflow is currently strengthening its core execution guarantees before the pub
 - [x] Go context / cancellation
 - [x] Concurrent execution failure policies
 - [x] Bounded concurrency / worker limits
+- [x] Structured parallel branches
+- [x] Managed background execution
+- [x] Scoped branch state
+- [x] Conditional execution
+- [x] Nested execution composition
+- [x] Rate limiting and throttling
+- [x] Live progress and state API
+- [x] Result metadata
+- [x] Pipeline validation
+- [x] Pipeline introspection
+- [x] Unified panic recovery
+- [x] Cross-feature interaction reliability
+- [x] Public API cleanup and v1 freeze
 
 
 ### Production Core
 
-- [ ] Step, stage, and pipeline timeouts
-- [ ] Structured execution errors
-- [ ] Stage and step lifecycle hooks
-- [ ] Context concurrency hardening
-- [ ] Race/stress/reliability testing
+- [x] Step, stage, and pipeline timeouts
+- [x] Structured execution errors
+- [x] Stage and step lifecycle hooks
+- [x] Context concurrency hardening
+- [x] Race/stress/reliability testing
 - [ ] Performance benchmarks
-- [ ] Public API stability review
+- [x] Public API stability review
 - [ ] Typed-core / generics evaluation
 
 ### v1.0
