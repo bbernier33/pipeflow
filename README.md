@@ -4,15 +4,20 @@ Pipeflow is a lightweight, composable pipeline execution library for Go.
 
 It provides reusable execution primitives for structuring backend processing as pipelines, stages, and steps while keeping execution concerns separate from business logic.
 
-Pipeflow is being developed toward a production-ready v1.0 core intended for reuse across backend services, data processing, IoT, realtime applications, game backends, and other Go workloads.
+Pipeflow Core v1.0 is stable and intended for reuse across backend services,
+data processing, IoT, realtime applications, game backends, and other Go
+workloads.
 
 ## Project Status
 
-Pipeflow is an early-stage open-source library under active development.
+Pipeflow Core v1.0.0 is released. Its public execution API and documented
+semantics are frozen for the v1 release line. See
+[API_STABILITY.md](API_STABILITY.md) for compatibility guarantees and the
+small retained deprecated surface.
 
-The library is functional, but the public API may change between minor releases while the project approaches its first stable `v1.0.0` release.
-
-Pipeflow is not yet recommended as a production dependency.
+The Core is production-oriented: cancellation, timeouts, retries, polling,
+rate limits, structured concurrency, cleanup, panic recovery, live state, and
+payload-free reports have race and cross-feature interaction coverage.
 
 Contributors working on concurrency should run `go test -race ./...`. Windows
 setup and the validated MSYS2 UCRT64 command are documented in
@@ -21,7 +26,7 @@ setup and the validated MSYS2 UCRT64 command are documented in
 ## Installation
 
 ```bash
-go get github.com/bbernier33/pipeflow
+go get github.com/bbernier33/pipeflow@v1.0.0
 ```
 
 ## Motivation
@@ -105,6 +110,8 @@ A `StageItem` can currently be:
 
 - `Step`
 - `ConcurrentSteps`
+- `Parallel`
+- `Subflow`
 
 `ConcurrentSteps` allows multiple independent steps to execute concurrently within an otherwise sequential stage.
 
@@ -1232,7 +1239,7 @@ These are reliability tests of the existing public contracts; Phase 22 adds no
 new execution modes or public API. See
 [ADR-030](adr/CrossFeatureReliability.md) for the tested invariants.
 
-## Current Features
+## V1 Core Capabilities
 
 - Pipeline → Stage → StageItem execution model
 - Sequential pipeline execution
@@ -1266,53 +1273,13 @@ new execution modes or public API. See
 - Logging
 - Error propagation
 
-## Roadmap to v1.0
+## V1 Release
 
-Pipeflow Core's public API is frozen for v1. Compatibility guarantees and the
-small deprecated surface are documented in [API_STABILITY.md](API_STABILITY.md).
-
-### Completed
-
-- [x] Core sequential execution
-- [x] Shared execution context
-- [x] Execution lifecycle
-- [x] Pipeline lifecycle hooks
-- [x] Concurrent step execution
-- [x] Retry policies
-- [x] Go context / cancellation
-- [x] Concurrent execution failure policies
-- [x] Bounded concurrency / worker limits
-- [x] Structured parallel branches
-- [x] Managed background execution
-- [x] Scoped branch state
-- [x] Conditional execution
-- [x] Nested execution composition
-- [x] Rate limiting and throttling
-- [x] Live progress and state API
-- [x] Result metadata
-- [x] Pipeline validation
-- [x] Pipeline introspection
-- [x] Unified panic recovery
-- [x] Cross-feature interaction reliability
-- [x] Public API cleanup and v1 freeze
-
-
-### Production Core
-
-- [x] Step, stage, and pipeline timeouts
-- [x] Structured execution errors
-- [x] Stage and step lifecycle hooks
-- [x] Context concurrency hardening
-- [x] Race/stress/reliability testing
-- [ ] Performance benchmarks
-- [x] Public API stability review
-- [ ] Typed-core / generics evaluation
-
-### v1.0
-
-`v1.0.0` will represent a stable, documented, production-ready Pipeflow execution core.
-
-Streaming, transport adapters, ETL, AI, and other domain capabilities will build on this foundation rather than being requirements for core v1.0.
+The current stable release is [`v1.0.0`](https://github.com/bbernier33/pipeflow/releases/tag/v1.0.0).
+Core v1 is complete: future compatible v1 releases may add APIs, while breaking
+changes require a new major version. Streaming, transport adapters, ETL, AI,
+and other domain capabilities can build around the frozen Core rather than
+expanding its execution model.
 
 ## Long-Term Direction
 
