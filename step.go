@@ -125,7 +125,7 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 	}
 	ctx.Logger().Info("Running step: " + s.name)
 	if s.pollPolicy == nil {
-		output, err = s.runAttempts(goCtx, ctx, input, recorder, reportPath, 0)
+		output, err = s.runAttempts(goCtx, ctx, input, recorder, reportPath, 0, lifecycle, stageName, parallelName, branchName)
 		if err == nil {
 			err = s.recordMetadata(output, recorder, reportPath)
 		}
@@ -146,7 +146,7 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		if recorder != nil {
 			recorder.startPoll(reportPath, poll)
 		}
-		output, err = s.runAttempts(pollCtx, ctx, input, recorder, reportPath, poll)
+		output, err = s.runAttempts(pollCtx, ctx, input, recorder, reportPath, poll, lifecycle, stageName, parallelName, branchName)
 		if err != nil {
 			err = annotateExecutionPoll(err, poll)
 			if recorder != nil {
@@ -272,7 +272,7 @@ func (s *Step) recordMetadata(output any, recorder *runRecorder, path stepReport
 	return nil
 }
 
-func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recorder *runRecorder, reportPath stepReportPath, poll int) (any, error) {
+func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recorder *runRecorder, reportPath stepReportPath, poll int, lifecycle *lifecycleDispatcher, stageName, parallelName, branchName string) (any, error) {
 
 	policy := RetryPolicy{MaxAttempts: 1}
 	if s.retryPolicy != nil {
@@ -287,12 +287,14 @@ func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recor
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 		if recorder != nil {
 			recorder.startAttempt(reportPath, poll, attempt)
+			lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, poll, attempt, ObservationStarted, StatusRunning, nil)
 		}
 		select {
 		case <-goCtx.Done():
 			err := annotateExecutionError(goCtx.Err(), "", "", s.name, attempt)
 			if recorder != nil {
 				recorder.finishAttempt(reportPath, poll, attempt, err)
+				lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, poll, attempt, ObservationFailed, statusForError(err), err)
 			}
 			return nil, err
 		default:
@@ -325,6 +327,11 @@ func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recor
 		}
 		if recorder != nil {
 			recorder.finishAttempt(reportPath, poll, attempt, err)
+			phase := ObservationCompleted
+			if err != nil {
+				phase = ObservationFailed
+			}
+			lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, poll, attempt, phase, statusForError(err), err)
 		}
 
 		if err == nil {

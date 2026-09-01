@@ -58,6 +58,7 @@ func Example_v1APIContract() {
 			pipeflow.WithTimeout(time.Second)),
 		pipeflow.NewStep("store", func(value int) error { return nil }),
 	)).WithLifecycleHook(func(pipeflow.LifecycleEvent) {})
+	pipeline = pipeline.WithObserver(pipeflow.ObserverFuncs{Trace: func(pipeflow.TraceEvent) {}})
 
 	output, report, err := pipeline.RunWithReport(context.Background())
 	_, _, _ = output, report, err

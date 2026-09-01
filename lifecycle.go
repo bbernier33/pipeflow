@@ -59,6 +59,7 @@ func (d *lifecycleDispatcher) emitBackground(eventType LifecycleEventType, backg
 		Type: eventType, RunID: d.runID, Pipeline: d.pipeline, Background: background,
 		Status: status, OccurredAt: time.Now(), Err: err,
 	}
+	d.observeLifecycle(event)
 	return d.runHooks(event)
 }
 
@@ -67,10 +68,11 @@ func (d *lifecycleDispatcher) emitBackground(eventType LifecycleEventType, backg
 type LifecycleHook func(LifecycleEvent)
 
 type lifecycleDispatcher struct {
-	runID    string
-	pipeline string
-	hooks    []LifecycleHook
-	subflow  string
+	runID       string
+	pipeline    string
+	hooks       []LifecycleHook
+	subflow     string
+	observation *observationDispatcher
 }
 
 func (d *lifecycleDispatcher) scopedSubflow(name string) *lifecycleDispatcher {
@@ -87,14 +89,22 @@ func (d *lifecycleDispatcher) emitSubflow(eventType LifecycleEventType, name str
 		return nil
 	}
 	event := LifecycleEvent{Type: eventType, RunID: d.runID, Pipeline: d.pipeline, Subflow: name, Status: status, OccurredAt: time.Now(), Err: err}
+	d.observeLifecycle(event)
 	return d.runHooks(event)
 }
 
-func newLifecycleDispatcher(runID, pipeline string, hooks []LifecycleHook) *lifecycleDispatcher {
-	if len(hooks) == 0 {
+func (d *lifecycleDispatcher) emitAttempt(stage, parallel, branch, step string, poll, attempt int, phase ObservationPhase, status Status, err error) {
+	if d == nil || d.observation == nil {
+		return
+	}
+	d.observation.emit(ObservationAttempt, phase, ObservationLocation{RunID: d.runID, Pipeline: d.pipeline, Stage: stage, Step: step, Parallel: parallel, Branch: branch, Subflow: d.subflow, Poll: poll, Attempt: attempt}, status, err)
+}
+
+func newLifecycleDispatcher(runID, pipeline string, hooks []LifecycleHook, observer Observer) *lifecycleDispatcher {
+	if len(hooks) == 0 && observer == nil {
 		return nil
 	}
-	return &lifecycleDispatcher{runID: runID, pipeline: pipeline, hooks: append([]LifecycleHook(nil), hooks...)}
+	return &lifecycleDispatcher{runID: runID, pipeline: pipeline, hooks: append([]LifecycleHook(nil), hooks...), observation: newObservationDispatcher(observer)}
 }
 
 func (d *lifecycleDispatcher) emit(eventType LifecycleEventType, stage, step string, status Status, err error) error {
@@ -111,7 +121,72 @@ func (d *lifecycleDispatcher) emitLocated(eventType LifecycleEventType, stage, p
 		Subflow: d.subflow,
 		Status:  status, OccurredAt: time.Now(), Err: err,
 	}
+	d.observeLifecycle(event)
 	return d.runHooks(event)
+}
+
+func (d *lifecycleDispatcher) observeLifecycle(event LifecycleEvent) {
+	if d == nil || d.observation == nil {
+		return
+	}
+	scope, phase := observationForLifecycle(event.Type)
+	if scope == "" {
+		return
+	}
+	d.observation.emit(scope, phase, ObservationLocation{RunID: event.RunID, Pipeline: event.Pipeline, Stage: event.Stage, Step: event.Step, Parallel: event.Parallel, Branch: event.Branch, Subflow: event.Subflow, Background: event.Background}, event.Status, event.Err)
+}
+
+func observationForLifecycle(t LifecycleEventType) (ObservationScope, ObservationPhase) {
+	switch t {
+	case PipelineStarted:
+		return ObservationPipeline, ObservationStarted
+	case PipelineCompleted:
+		return ObservationPipeline, ObservationCompleted
+	case PipelineFailed:
+		return ObservationPipeline, ObservationFailed
+	case PipelineFinalized:
+		return ObservationPipeline, ObservationFinalized
+	case StageStarted:
+		return ObservationStage, ObservationStarted
+	case StageCompleted:
+		return ObservationStage, ObservationCompleted
+	case StageFailed:
+		return ObservationStage, ObservationFailed
+	case StepStarted:
+		return ObservationStep, ObservationStarted
+	case StepCompleted:
+		return ObservationStep, ObservationCompleted
+	case StepFailed:
+		return ObservationStep, ObservationFailed
+	case StepSkipped:
+		return ObservationStep, ObservationSkipped
+	case ParallelStarted:
+		return ObservationParallel, ObservationStarted
+	case ParallelCompleted:
+		return ObservationParallel, ObservationCompleted
+	case ParallelFailed:
+		return ObservationParallel, ObservationFailed
+	case BranchStarted:
+		return ObservationBranch, ObservationStarted
+	case BranchCompleted:
+		return ObservationBranch, ObservationCompleted
+	case BranchFailed:
+		return ObservationBranch, ObservationFailed
+	case SubflowStarted:
+		return ObservationSubflow, ObservationStarted
+	case SubflowCompleted:
+		return ObservationSubflow, ObservationCompleted
+	case SubflowFailed:
+		return ObservationSubflow, ObservationFailed
+	case BackgroundStarted:
+		return ObservationBackground, ObservationStarted
+	case BackgroundCompleted:
+		return ObservationBackground, ObservationCompleted
+	case BackgroundFailed:
+		return ObservationBackground, ObservationFailed
+	default:
+		return "", ""
+	}
 }
 
 func (d *lifecycleDispatcher) runHooks(event LifecycleEvent) error {

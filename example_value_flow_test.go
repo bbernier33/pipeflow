@@ -292,6 +292,22 @@ func ExamplePipeline_WithLifecycleHook() {
 	// <nil>
 }
 
+func ExamplePipeline_WithObserver() {
+	pipeline := pipeflow.NewPipeline("orders",
+		pipeflow.NewStage("prepare", pipeflow.NewStep("load", func() (int, error) { return 42, nil })),
+	).WithObserver(pipeflow.ObserverFuncs{
+		Trace: func(event pipeflow.TraceEvent) {
+			if event.Scope == pipeflow.ObservationStep && event.Phase == pipeflow.ObservationCompleted {
+				fmt.Println(event.Location.Step, event.Status)
+			}
+		},
+	})
+
+	_, _ = pipeline.Run(context.Background())
+	// Output:
+	// load completed
+}
+
 func ExamplePipeline_Finally() {
 	pipeline := pipeflow.NewPipeline("temporary-worker",
 		pipeflow.NewStage("work", pipeflow.NewStep("process", func() error { return nil })),

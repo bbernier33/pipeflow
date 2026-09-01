@@ -1323,6 +1323,30 @@ Nested Subflows and Parallel Branches use explicit paths. Conditions and
 polling predicates remain Go code—use `WithPollPredicate` when YAML owns the
 polling schedule. See [ADR-032](adr/ConfigurationFoundation.md).
 
+## Observation (v1.2)
+
+Attach an observer when an application needs structured in-process telemetry:
+
+```go
+pipeline = pipeline.WithObserver(pipeflow.ObserverFuncs{
+    Trace: func(event pipeflow.TraceEvent) {
+        // Timestamped Pipeline/Stage/Step/Attempt execution path.
+    },
+    Metric: func(sample pipeflow.MetricSample) {
+        // Raw execution counts and durations; aggregate in the consumer.
+    },
+    Profile: func(sample pipeflow.ProfileSample) {
+        // Elapsed time attributed to an execution location.
+    },
+})
+```
+
+Observation is off by default and contains no flowing business values or error
+messages. Observer panics are isolated from execution, callbacks are serialized,
+and consumers should return promptly. Transports, exporters, persistence,
+dashboards, health/history views, and runtime sampling remain outside Core. See
+[ADR-033](adr/ObservationContract.md).
+
 ## Long-Term Direction
 
 After the production core is stabilized, Pipeflow is intended to grow through modular capabilities such as:
