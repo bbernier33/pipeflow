@@ -92,6 +92,33 @@ type ObserverFuncs struct {
 	Profile func(ProfileSample)
 }
 
+type serializedObserver struct {
+	mu       sync.Mutex
+	observer Observer
+}
+
+func newSerializedObserver(observer Observer) Observer {
+	if observer == nil {
+		return nil
+	}
+	return &serializedObserver{observer: observer}
+}
+func (o *serializedObserver) ObserveTrace(v TraceEvent) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.observer.ObserveTrace(v)
+}
+func (o *serializedObserver) ObserveMetric(v MetricSample) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.observer.ObserveMetric(v)
+}
+func (o *serializedObserver) ObserveProfile(v ProfileSample) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.observer.ObserveProfile(v)
+}
+
 func (o ObserverFuncs) ObserveTrace(v TraceEvent) {
 	if o.Trace != nil {
 		o.Trace(v)

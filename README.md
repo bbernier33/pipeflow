@@ -1372,6 +1372,45 @@ begin with Worker/Stream execution in v1.4, where a runtime actually owns
 multiple values. v1.3 intentionally adds no inert buffer settings and no visible
 QueueStep. See [ADR-034](adr/StepRoles.md).
 
+## Worker and Stream Runtime (v1.4)
+
+Run the same finite Pipeline repeatedly without changing its Step functions:
+
+```go
+worker, err := pipeline.StartWorker(ctx, pipeflow.WorkerOptions{
+    Workers:     4,
+    Buffer:      100,
+    MaxInFlight: 104,
+})
+
+work, err := worker.Submit(ctx, input)
+output, report, err := work.Wait()
+
+worker.Close() // stop intake and drain accepted work
+err = worker.Wait()
+```
+
+Or connect an application/adapter input channel as a continuous Stream:
+
+```go
+stream, err := pipeline.StartStream(ctx, inputs, pipeflow.StreamOptions{
+    Workers:       4,
+    Buffer:        100,
+    MaxInFlight:   104,
+    FailurePolicy: pipeflow.StreamContinue,
+})
+
+for result := range stream.Results() {
+    // result.Output, result.Report, result.Err
+}
+```
+
+Queues are bounded and block upstream when full. Worker run failures and Stream
+item failures are isolated; Streams continue by default. `Close` drains,
+`Cancel` stops immediately, one Stream worker preserves order, and concurrent
+workers emit completion order. Runtime queues are memory-only and provide no
+durability or exactly-once guarantee. See [ADR-035](adr/WorkerStreamRuntime.md).
+
 ## Long-Term Direction
 
 After the production core is stabilized, Pipeflow is intended to grow through modular capabilities such as:

@@ -325,6 +325,38 @@ func ExampleNewSourceStep() {
 	// output 21
 }
 
+func ExamplePipeline_StartWorker() {
+	pipeline := pipeflow.NewPipeline("double", pipeflow.NewStage("work",
+		pipeflow.NewStep("double", func(value int) (int, error) { return value * 2, nil }),
+	))
+	worker, _ := pipeline.StartWorker(context.Background(), pipeflow.WorkerOptions{Workers: 1, Buffer: 1})
+	work, _ := worker.Submit(context.Background(), 21)
+	worker.Close()
+	output, report, err := work.Wait()
+	fmt.Println(output, report.Status, err)
+	_ = worker.Wait()
+	// Output:
+	// 42 completed <nil>
+}
+
+func ExamplePipeline_StartStream() {
+	inputs := make(chan any, 2)
+	inputs <- 2
+	inputs <- 3
+	close(inputs)
+	pipeline := pipeflow.NewPipeline("square", pipeflow.NewStage("work",
+		pipeflow.NewStep("square", func(value int) (int, error) { return value * value, nil }),
+	))
+	stream, _ := pipeline.StartStream(context.Background(), inputs, pipeflow.StreamOptions{Workers: 1, Buffer: 1})
+	for result := range stream.Results() {
+		fmt.Println(result.Sequence, result.Output, result.Err)
+	}
+	_ = stream.Wait()
+	// Output:
+	// 1 4 <nil>
+	// 2 9 <nil>
+}
+
 func ExamplePipeline_Finally() {
 	pipeline := pipeflow.NewPipeline("temporary-worker",
 		pipeflow.NewStage("work", pipeflow.NewStep("process", func() error { return nil })),

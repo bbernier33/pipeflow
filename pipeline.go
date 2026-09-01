@@ -27,7 +27,7 @@ type Pipeline struct {
 // WithObserver returns a Pipeline that emits payload-free Metrics, Trace, and
 // Profile samples. Observer failures never change execution results.
 func (p Pipeline) WithObserver(observer Observer) Pipeline {
-	p.observer = observer
+	p.observer = newSerializedObserver(observer)
 	return p
 }
 
