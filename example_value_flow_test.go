@@ -308,6 +308,23 @@ func ExamplePipeline_WithObserver() {
 	// load completed
 }
 
+func ExampleNewSourceStep() {
+	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("flow",
+		pipeflow.NewSourceStep("load", func() (int, error) { return 20, nil }),
+		pipeflow.NewStep("price", func(value int) (int, error) { return value + 1, nil }),
+		pipeflow.NewSinkStep("store", func(value int) error {
+			fmt.Println("stored", value)
+			return nil
+		}),
+	))
+
+	output, _ := pipeline.Run(context.Background())
+	fmt.Println("output", output)
+	// Output:
+	// stored 21
+	// output 21
+}
+
 func ExamplePipeline_Finally() {
 	pipeline := pipeflow.NewPipeline("temporary-worker",
 		pipeflow.NewStage("work", pipeflow.NewStep("process", func() error { return nil })),

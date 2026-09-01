@@ -82,6 +82,7 @@ type StageSettings struct {
 }
 
 type StepSettings struct {
+	Role      *string            `yaml:"role"`
 	Timeout   *Duration          `yaml:"timeout"`
 	Retry     *RetrySettings     `yaml:"retry"`
 	Polling   *PollingSettings   `yaml:"polling"`
@@ -161,6 +162,7 @@ type EffectiveBackgroundConfig struct {
 
 type EffectiveStepConfig struct {
 	Name      string
+	Role      EffectiveValue[StepRole]
 	Timeout   EffectiveValue[time.Duration]
 	Retry     EffectiveValue[EffectiveRetrySettings]
 	Polling   EffectiveValue[EffectivePollingSettings]
@@ -393,6 +395,28 @@ func applyStageItemsConfig(stage *Stage, defaults ConfigDefaults, config StageCo
 
 func applyStepSettings(step *Step, defaults, override StepSettings) EffectiveStepConfig {
 	effective := EffectiveStepConfig{Name: step.name}
+	role, roleSource := StepRoleNormal, ConfigSourceDefault
+	if defaults.Role != nil {
+		parsed, err := parseStepRole(*defaults.Role)
+		if err != nil {
+			step.configErr = err
+		} else {
+			role, roleSource = parsed, ConfigSourceGlobal
+		}
+	}
+	if override.Role != nil {
+		parsed, err := parseStepRole(*override.Role)
+		if err != nil {
+			step.configErr = err
+		} else {
+			role, roleSource = parsed, ConfigSourceStep
+		}
+	}
+	if step.roleSet {
+		role, roleSource = step.Role(), ConfigSourceGo
+	}
+	step.role = role
+	effective.Role = EffectiveValue[StepRole]{Value: role, Source: roleSource}
 	step.timeout, effective.Timeout = resolveDuration(step.timeout, step.timeoutSet,
 		durationCandidate{defaults.Timeout, ConfigSourceGlobal},
 		durationCandidate{override.Timeout, ConfigSourceStep})

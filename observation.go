@@ -35,6 +35,7 @@ const (
 // ObservationLocation identifies an execution unit without carrying business data.
 type ObservationLocation struct {
 	RunID, Pipeline, Stage, Step, Parallel, Branch, Subflow, Background string
+	Role                                                                StepRole
 	Attempt, Poll                                                       int
 }
 

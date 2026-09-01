@@ -22,6 +22,8 @@ const (
 // unit.
 type Step struct {
 	name         string
+	role         StepRole
+	roleSet      bool
 	action       func(context.Context, *Context, any) (any, error)
 	retryPolicy  *RetryPolicy
 	inputType    reflect.Type
@@ -45,8 +47,12 @@ func NewStep(
 	action any,
 	options ...StepOption,
 ) *Step {
+	return newStep(name, action, StepRoleNormal, false, options...)
+}
+
+func newStep(name string, action any, role StepRole, roleSet bool, options ...StepOption) *Step {
 	step := &Step{
-		name: name,
+		name: name, role: role, roleSet: roleSet,
 	}
 	step.action, step.inputType, step.outputType, step.flow, step.configErr = adaptStepAction(name, action)
 
@@ -77,9 +83,9 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 			}
 			var hookErr error
 			if err != nil {
-				hookErr = lifecycle.emitLocated(StepFailed, stageName, parallelName, branchName, s.name, statusForError(err), err)
+				hookErr = lifecycle.emitStep(StepFailed, stageName, parallelName, branchName, s.name, s.Role(), statusForError(err), err)
 			} else {
-				hookErr = lifecycle.emitLocated(StepCompleted, stageName, parallelName, branchName, s.name, StatusCompleted, nil)
+				hookErr = lifecycle.emitStep(StepCompleted, stageName, parallelName, branchName, s.name, s.Role(), StatusCompleted, nil)
 			}
 			if hookErr != nil {
 				hookErr = annotateExecutionError(hookErr, "", "", s.name, 0)
@@ -105,7 +111,7 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		}
 		if !shouldRun {
 			if recorder != nil {
-				if hookErr := lifecycle.emitLocated(StepSkipped, stageName, parallelName, branchName, s.name, StatusSkipped, nil); hookErr != nil {
+				if hookErr := lifecycle.emitStep(StepSkipped, stageName, parallelName, branchName, s.name, s.Role(), StatusSkipped, nil); hookErr != nil {
 					return nil, annotateExecutionError(hookErr, "", "", s.name, 0)
 				}
 				recorder.skipStep(reportPath)
@@ -116,7 +122,7 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		}
 	}
 	if recorder != nil {
-		if hookErr := lifecycle.emitLocated(StepStarted, stageName, parallelName, branchName, s.name, StatusRunning, nil); hookErr != nil {
+		if hookErr := lifecycle.emitStep(StepStarted, stageName, parallelName, branchName, s.name, s.Role(), StatusRunning, nil); hookErr != nil {
 			return nil, annotateExecutionError(hookErr, "", "", s.name, 0)
 		}
 	}
@@ -287,14 +293,14 @@ func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recor
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 		if recorder != nil {
 			recorder.startAttempt(reportPath, poll, attempt)
-			lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, poll, attempt, ObservationStarted, StatusRunning, nil)
+			lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, s.Role(), poll, attempt, ObservationStarted, StatusRunning, nil)
 		}
 		select {
 		case <-goCtx.Done():
 			err := annotateExecutionError(goCtx.Err(), "", "", s.name, attempt)
 			if recorder != nil {
 				recorder.finishAttempt(reportPath, poll, attempt, err)
-				lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, poll, attempt, ObservationFailed, statusForError(err), err)
+				lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, s.Role(), poll, attempt, ObservationFailed, statusForError(err), err)
 			}
 			return nil, err
 		default:
@@ -331,7 +337,7 @@ func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recor
 			if err != nil {
 				phase = ObservationFailed
 			}
-			lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, poll, attempt, phase, statusForError(err), err)
+			lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, s.Role(), poll, attempt, phase, statusForError(err), err)
 		}
 
 		if err == nil {

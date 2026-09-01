@@ -89,6 +89,7 @@ type BranchReport struct {
 
 type StepReport struct {
 	Name      string
+	Role      StepRole
 	Status    Status
 	StartedAt time.Time
 	EndedAt   time.Time
@@ -157,17 +158,17 @@ func buildStageReports(stages []Stage) []StageReport {
 		for _, item := range stage.items {
 			switch typed := item.(type) {
 			case *Step:
-				stageReport.Steps = append(stageReport.Steps, StepReport{Name: typed.name, Status: StatusPending})
+				stageReport.Steps = append(stageReport.Steps, StepReport{Name: typed.name, Role: typed.Role(), Status: StatusPending})
 			case *ConcurrentSteps:
 				for _, step := range typed.steps {
-					stageReport.Steps = append(stageReport.Steps, StepReport{Name: step.name, Status: StatusPending})
+					stageReport.Steps = append(stageReport.Steps, StepReport{Name: step.name, Role: step.Role(), Status: StatusPending})
 				}
 			case *Parallel:
 				parallelReport := ParallelReport{Name: typed.name, Status: StatusPending}
 				for _, branch := range typed.branches {
 					branchReport := BranchReport{Name: branch.name, Status: StatusPending}
 					for _, step := range branch.steps {
-						branchReport.Steps = append(branchReport.Steps, StepReport{Name: step.name, Status: StatusPending})
+						branchReport.Steps = append(branchReport.Steps, StepReport{Name: step.name, Role: step.Role(), Status: StatusPending})
 					}
 					parallelReport.Branches = append(parallelReport.Branches, branchReport)
 				}

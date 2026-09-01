@@ -1347,6 +1347,31 @@ and consumers should return promptly. Transports, exporters, persistence,
 dashboards, health/history views, and runtime sampling remain outside Core. See
 [ADR-033](adr/ObservationContract.md).
 
+## Source and Sink Steps (v1.3)
+
+Source and Sink roles make application boundaries explicit while retaining the
+same Step engine and ordinary function signatures:
+
+```go
+pipeline := pipeflow.NewPipeline("orders",
+    pipeflow.NewStage("flow",
+        pipeflow.NewSourceStep("load", loadOrder),
+        pipeflow.NewStep("price", priceOrder),
+        pipeflow.NewSinkStep("store", storeInvoice),
+    ),
+)
+```
+
+`StepRoleNormal`, `StepRoleSource`, and `StepRoleSink` appear in descriptions,
+reports, live state, lifecycle events, observation data, and effective YAML
+configuration. Roles do not change value flow: a `func(T) error` Sink remains a
+pass-through Step.
+
+Queue buffering, batching, workers, backpressure, ordering, and drain semantics
+begin with Worker/Stream execution in v1.4, where a runtime actually owns
+multiple values. v1.3 intentionally adds no inert buffer settings and no visible
+QueueStep. See [ADR-034](adr/StepRoles.md).
+
 ## Long-Term Direction
 
 After the production core is stabilized, Pipeflow is intended to grow through modular capabilities such as:

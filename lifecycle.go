@@ -46,6 +46,7 @@ type LifecycleEvent struct {
 	Branch     string
 	Background string
 	Subflow    string
+	Role       StepRole
 	Status     Status
 	OccurredAt time.Time
 	Err        error
@@ -93,11 +94,20 @@ func (d *lifecycleDispatcher) emitSubflow(eventType LifecycleEventType, name str
 	return d.runHooks(event)
 }
 
-func (d *lifecycleDispatcher) emitAttempt(stage, parallel, branch, step string, poll, attempt int, phase ObservationPhase, status Status, err error) {
+func (d *lifecycleDispatcher) emitAttempt(stage, parallel, branch, step string, role StepRole, poll, attempt int, phase ObservationPhase, status Status, err error) {
 	if d == nil || d.observation == nil {
 		return
 	}
-	d.observation.emit(ObservationAttempt, phase, ObservationLocation{RunID: d.runID, Pipeline: d.pipeline, Stage: stage, Step: step, Parallel: parallel, Branch: branch, Subflow: d.subflow, Poll: poll, Attempt: attempt}, status, err)
+	d.observation.emit(ObservationAttempt, phase, ObservationLocation{RunID: d.runID, Pipeline: d.pipeline, Stage: stage, Step: step, Role: role, Parallel: parallel, Branch: branch, Subflow: d.subflow, Poll: poll, Attempt: attempt}, status, err)
+}
+
+func (d *lifecycleDispatcher) emitStep(eventType LifecycleEventType, stage, parallel, branch, step string, role StepRole, status Status, err error) error {
+	if d == nil {
+		return nil
+	}
+	event := LifecycleEvent{Type: eventType, RunID: d.runID, Pipeline: d.pipeline, Stage: stage, Parallel: parallel, Branch: branch, Step: step, Subflow: d.subflow, Role: role, Status: status, OccurredAt: time.Now(), Err: err}
+	d.observeLifecycle(event)
+	return d.runHooks(event)
 }
 
 func newLifecycleDispatcher(runID, pipeline string, hooks []LifecycleHook, observer Observer) *lifecycleDispatcher {
@@ -133,7 +143,7 @@ func (d *lifecycleDispatcher) observeLifecycle(event LifecycleEvent) {
 	if scope == "" {
 		return
 	}
-	d.observation.emit(scope, phase, ObservationLocation{RunID: event.RunID, Pipeline: event.Pipeline, Stage: event.Stage, Step: event.Step, Parallel: event.Parallel, Branch: event.Branch, Subflow: event.Subflow, Background: event.Background}, event.Status, event.Err)
+	d.observation.emit(scope, phase, ObservationLocation{RunID: event.RunID, Pipeline: event.Pipeline, Stage: event.Stage, Step: event.Step, Role: event.Role, Parallel: event.Parallel, Branch: event.Branch, Subflow: event.Subflow, Background: event.Background}, event.Status, event.Err)
 }
 
 func observationForLifecycle(t LifecycleEventType) (ObservationScope, ObservationPhase) {

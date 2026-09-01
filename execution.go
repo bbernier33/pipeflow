@@ -64,6 +64,7 @@ type CurrentBranch struct {
 
 type CurrentStep struct {
 	Name            string
+	Role            StepRole
 	Status          Status
 	Duration        time.Duration
 	Attempt         int
@@ -121,6 +122,7 @@ type BranchState struct {
 
 type StepState struct {
 	Name            string
+	Role            StepRole
 	Status          Status
 	Duration        time.Duration
 	Attempt         int
@@ -189,7 +191,7 @@ func stageStates(reports []StageReport) []StageState {
 }
 
 func stepState(report StepReport) StepState {
-	state := StepState{Name: report.Name, Status: report.Status, Duration: report.Duration}
+	state := StepState{Name: report.Name, Role: report.Role, Status: report.Status, Duration: report.Duration}
 	if count := len(report.Polls); count > 0 && report.Polls[count-1].Status == StatusRunning {
 		state.Poll = report.Polls[count-1].Poll
 	}
@@ -221,7 +223,7 @@ func (e *Execution) Current() CurrentExecution {
 			if step.Status != StatusRunning {
 				continue
 			}
-			currentStep := CurrentStep{Name: step.Name, Status: step.Status, Duration: step.Duration}
+			currentStep := CurrentStep{Name: step.Name, Role: step.Role, Status: step.Status, Duration: step.Duration}
 			if count := len(step.Polls); count > 0 {
 				currentStep.Poll = step.Polls[count-1].Poll
 			}
@@ -302,7 +304,7 @@ func currentSubflowFromReport(report SubflowReport) CurrentSubflow {
 }
 
 func currentStepFromReport(step StepReport) CurrentStep {
-	current := CurrentStep{Name: step.Name, Status: step.Status, Duration: step.Duration}
+	current := CurrentStep{Name: step.Name, Role: step.Role, Status: step.Status, Duration: step.Duration}
 	if count := len(step.Polls); count > 0 {
 		current.Poll = step.Polls[count-1].Poll
 	}
