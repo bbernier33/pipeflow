@@ -25,6 +25,7 @@ func WithRetry(policy RetryPolicy) StepOption {
 		policy.Jitter = 1
 	}
 	return func(step *Step) {
+		step.retrySet = true
 		if policy.Backoff != FixedBackoff && policy.Backoff != ExponentialBackoff {
 			if step.configErr == nil {
 				step.configErr = fmt.Errorf("pipeflow: step %q has invalid retry backoff strategy %d", step.name, policy.Backoff)
@@ -44,6 +45,7 @@ func WithRetry(policy RetryPolicy) StepOption {
 // WithTimeout limits the total Step execution, including retries and delays.
 func WithTimeout(timeout time.Duration) StepOption {
 	return func(step *Step) {
+		step.timeoutSet = true
 		if timeout > 0 {
 			step.timeout = timeout
 		} else {
@@ -55,7 +57,23 @@ func WithTimeout(timeout time.Duration) StepOption {
 // WithPolling repeats a successful Step operation until its predicate is true.
 func WithPolling(policy PollPolicy) StepOption {
 	return func(step *Step) {
+		step.pollingSet = true
 		compiled, err := compilePollPolicy(step, policy)
+		if err != nil {
+			if step.configErr == nil {
+				step.configErr = err
+			}
+			return
+		}
+		step.pollPolicy = compiled
+	}
+}
+
+// WithPollPredicate supplies polling business logic while allowing YAML to
+// configure its schedule, limits, and timeout.
+func WithPollPredicate(predicate any) StepOption {
+	return func(step *Step) {
+		compiled, err := compilePollPolicy(step, PollPolicy{Until: predicate})
 		if err != nil {
 			if step.configErr == nil {
 				step.configErr = err
@@ -70,6 +88,7 @@ func WithPolling(policy PollPolicy) StepOption {
 // Step preserves its input value.
 func WithCondition(condition any) StepOption {
 	return func(step *Step) {
+		step.rateLimitSet = true
 		compiled, err := compileCondition(step, condition)
 		if err != nil {
 			if step.configErr == nil {

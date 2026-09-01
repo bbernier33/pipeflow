@@ -98,6 +98,9 @@ func validateStageItems(stage *Stage) error {
 				}
 			}
 		case *Parallel:
+			if typed.configErr != nil {
+				return typed.configErr
+			}
 			if typed.name == "" {
 				return fmt.Errorf("pipeflow: stage %q contains a parallel group with an empty name", stage.name)
 			}

@@ -9,9 +9,11 @@ import (
 )
 
 type Pipeline struct {
-	name    string
-	stages  []Stage
-	timeout time.Duration
+	name            string
+	stages          []Stage
+	timeout         time.Duration
+	timeoutSet      bool
+	effectiveConfig *EffectivePipelineConfig
 
 	onStarted   []PipelineHook
 	onCompleted []PipelineHook
@@ -23,6 +25,7 @@ type Pipeline struct {
 
 // WithTimeout returns a Pipeline limited by a total execution timeout.
 func (p Pipeline) WithTimeout(timeout time.Duration) Pipeline {
+	p.timeoutSet = true
 	if timeout > 0 {
 		p.timeout = timeout
 	} else {

@@ -21,18 +21,22 @@ const (
 // Step adapts one supported ordinary Go function into a value-flow execution
 // unit.
 type Step struct {
-	name        string
-	action      func(context.Context, *Context, any) (any, error)
-	retryPolicy *RetryPolicy
-	inputType   reflect.Type
-	outputType  reflect.Type
-	flow        stepFlow
-	configErr   error
-	timeout     time.Duration
-	pollPolicy  *compiledPollPolicy
-	condition   *compiledCondition
-	rateLimit   *RateLimitPolicy
-	metadata    *compiledMetadataExtractor
+	name         string
+	action       func(context.Context, *Context, any) (any, error)
+	retryPolicy  *RetryPolicy
+	inputType    reflect.Type
+	outputType   reflect.Type
+	flow         stepFlow
+	configErr    error
+	timeout      time.Duration
+	timeoutSet   bool
+	retrySet     bool
+	pollingSet   bool
+	rateLimitSet bool
+	pollPolicy   *compiledPollPolicy
+	condition    *compiledCondition
+	rateLimit    *RateLimitPolicy
+	metadata     *compiledMetadataExtractor
 }
 
 // NewStep creates a Step from a supported ordinary Go function and options.

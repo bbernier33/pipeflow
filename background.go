@@ -19,13 +19,14 @@ type BackgroundFunc func(context.Context) error
 type BackgroundOption func(*backgroundTask)
 
 func WithBackgroundFailurePolicy(policy BackgroundFailurePolicy) BackgroundOption {
-	return func(task *backgroundTask) { task.failurePolicy = policy }
+	return func(task *backgroundTask) { task.failurePolicy = policy; task.failurePolicySet = true }
 }
 
 type backgroundTask struct {
-	name          string
-	fn            BackgroundFunc
-	failurePolicy BackgroundFailurePolicy
+	name             string
+	fn               BackgroundFunc
+	failurePolicy    BackgroundFailurePolicy
+	failurePolicySet bool
 }
 
 // BackgroundError identifies a failed fatal background task.

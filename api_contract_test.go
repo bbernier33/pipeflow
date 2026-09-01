@@ -25,6 +25,10 @@ var (
 	_ func(*pipeflow.Pipeline) error                                                     = (*pipeflow.Pipeline).Validate
 	_ func(*pipeflow.Pipeline, any) error                                                = (*pipeflow.Pipeline).ValidateInput
 	_ func(pipeflow.Pipeline) pipeflow.Description                                       = pipeflow.Pipeline.Describe
+	_ func([]byte) (pipeflow.Config, error)                                              = pipeflow.ParseConfigYAML
+	_ func(pipeflow.Pipeline, pipeflow.Config) (pipeflow.Pipeline, error)                = pipeflow.Pipeline.WithConfig
+	_ func(pipeflow.Pipeline) (pipeflow.EffectivePipelineConfig, bool)                   = pipeflow.Pipeline.EffectiveConfig
+	_ pipeflow.StepOption                                                                = pipeflow.WithPollPredicate(func(bool) bool { return true })
 
 	_ func(*pipeflow.Execution) pipeflow.Status                  = (*pipeflow.Execution).Status
 	_ func(*pipeflow.Execution) pipeflow.CurrentExecution        = (*pipeflow.Execution).Current

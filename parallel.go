@@ -31,9 +31,11 @@ type ParallelResults []BranchResult
 // Parallel executes isolated Branches concurrently and joins their outputs in
 // declaration order.
 type Parallel struct {
-	name          string
-	branches      []Branch
-	failurePolicy FailurePolicy
+	name             string
+	branches         []Branch
+	failurePolicy    FailurePolicy
+	failurePolicySet bool
+	configErr        error
 }
 
 // ParallelOption configures a Parallel group.
@@ -41,7 +43,7 @@ type ParallelOption func(*Parallel)
 
 // WithParallelFailurePolicy selects WaitAll or FailFast behavior.
 func WithParallelFailurePolicy(policy FailurePolicy) ParallelOption {
-	return func(parallel *Parallel) { parallel.failurePolicy = policy }
+	return func(parallel *Parallel) { parallel.failurePolicy = policy; parallel.failurePolicySet = true }
 }
 
 // NewParallel creates a named group of concurrent Branches.

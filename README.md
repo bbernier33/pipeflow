@@ -1281,6 +1281,48 @@ changes require a new major version. Streaming, transport adapters, ETL, AI,
 and other domain capabilities can build around the frozen Core rather than
 expanding its execution model.
 
+## V1.1 Configuration
+
+V1.1 adds an optional, immutable configuration layer
+for existing execution policies. Zero-configuration Go remains unchanged, and
+explicit Go options always win:
+
+```go
+cfg, err := pipeflow.ParseConfigYAML(data)
+if err != nil {
+    return err
+}
+
+configured, err := pipeline.WithConfig(cfg)
+if err != nil {
+    return err
+}
+
+effective, _ := configured.EffectiveConfig()
+```
+
+```yaml
+defaults:
+  step:
+    retry:
+      max_attempts: 3
+      backoff: exponential
+pipelines:
+  orders:
+    timeout: 30s
+    stages:
+      process:
+        steps:
+          charge:
+            timeout: 5s
+```
+
+The schema covers Pipeline/Stage timeouts; Step timeout, retry, polling schedule,
+and rate limiting; Parallel failure policy; and Background failure policy.
+Nested Subflows and Parallel Branches use explicit paths. Conditions and
+polling predicates remain Go code—use `WithPollPredicate` when YAML owns the
+polling schedule. See [ADR-032](adr/ConfigurationFoundation.md).
+
 ## Long-Term Direction
 
 After the production core is stabilized, Pipeflow is intended to grow through modular capabilities such as:
