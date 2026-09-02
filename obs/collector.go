@@ -130,6 +130,42 @@ type QueueView struct {
 	Utilization float64 `json:"utilization"`
 }
 
+type RecoveryView struct {
+	Pipeline     string          `json:"pipeline"`
+	Stage        string          `json:"stage"`
+	Step         string          `json:"step"`
+	Name         string          `json:"name"`
+	Activations  uint64          `json:"activations"`
+	Completed    uint64          `json:"completed"`
+	Failed       uint64          `json:"failed"`
+	RetryStep    uint64          `json:"retry_step"`
+	FailStep     uint64          `json:"fail_step"`
+	FailStage    uint64          `json:"fail_stage"`
+	FailPipeline uint64          `json:"fail_pipeline"`
+	LastStatus   pipeflow.Status `json:"last_status"`
+	LastSeen     time.Time       `json:"last_seen"`
+}
+
+type CircuitView struct {
+	Dependency    string                `json:"dependency"`
+	State         pipeflow.CircuitState `json:"state"`
+	Events        uint64                `json:"events"`
+	Failures      uint64                `json:"failures"`
+	ShortCircuits uint64                `json:"short_circuits"`
+	Probes        uint64                `json:"probes"`
+	LastSeen      time.Time             `json:"last_seen"`
+}
+
+type IdempotencyView struct {
+	Guard               string    `json:"guard"`
+	Executed            uint64    `json:"executed"`
+	DuplicateCompleted  uint64    `json:"duplicate_completed"`
+	DuplicateInProgress uint64    `json:"duplicate_in_progress"`
+	FailedReleasable    uint64    `json:"failed_releasable"`
+	StoreFailures       uint64    `json:"store_failures"`
+	LastSeen            time.Time `json:"last_seen"`
+}
+
 type Snapshot struct {
 	CapturedAt                                     time.Time
 	Pipelines                                      []PipelineView
@@ -139,6 +175,9 @@ type Snapshot struct {
 	Profiles                                       []ProfileAggregate
 	Workers                                        []WorkerView
 	Queues                                         []QueueView
+	Recoveries                                     []RecoveryView
+	Circuits                                       []CircuitView
+	Idempotency                                    []IdempotencyView
 	Traces                                         []pipeflow.TraceEvent
 	RecentMetrics                                  []pipeflow.MetricSample
 	RecentProfiles                                 []pipeflow.ProfileSample
@@ -182,10 +221,13 @@ type Collector struct {
 	profileAggregates                              map[profileKey]ProfileAggregate
 	errors                                         map[errorKey]ErrorGroup
 	workers                                        map[string]*trackedWorker
+	recoveries                                     map[string]RecoveryView
+	circuits                                       map[string]CircuitView
+	idempotency                                    map[string]IdempotencyView
 }
 
 func NewCollector(options Options) *Collector {
-	return &Collector{options: options.normalized(), runs: make(map[runKey]RunView), pipelines: make(map[string]*pipelineState), metricAggregates: make(map[metricKey]MetricAggregate), profileAggregates: make(map[profileKey]ProfileAggregate), errors: make(map[errorKey]ErrorGroup), workers: make(map[string]*trackedWorker)}
+	return &Collector{options: options.normalized(), runs: make(map[runKey]RunView), pipelines: make(map[string]*pipelineState), metricAggregates: make(map[metricKey]MetricAggregate), profileAggregates: make(map[profileKey]ProfileAggregate), errors: make(map[errorKey]ErrorGroup), workers: make(map[string]*trackedWorker), recoveries: make(map[string]RecoveryView), circuits: make(map[string]CircuitView), idempotency: make(map[string]IdempotencyView)}
 }
 
 // TrackWorker adds a named Core Worker to future operational snapshots. The
@@ -225,6 +267,7 @@ func (c *Collector) ObserveTrace(event pipeflow.TraceEvent) {
 	defer c.mu.Unlock()
 	c.traces, c.droppedTraces = appendBounded(c.traces, event, c.options.TraceCapacity, c.droppedTraces)
 	c.observeRun(event)
+	c.observeResilience(event)
 	if event.Error != nil {
 		key := errorKey{pipeline: event.Location.Pipeline, stage: event.Location.Stage, step: event.Location.Step, kind: event.Error.Type, panic: event.Error.Panic}
 		group := c.errors[key]
@@ -234,6 +277,66 @@ func (c *Collector) ObserveTrace(event pipeflow.TraceEvent) {
 		group.Occurrences++
 		group.LastSeen = event.OccurredAt
 		c.errors[key] = group
+	}
+}
+
+func (c *Collector) observeResilience(event pipeflow.TraceEvent) {
+	switch event.Scope {
+	case pipeflow.ObservationRecovery:
+		key := event.Location.Pipeline + "\x00" + event.Location.Stage + "\x00" + event.Location.Step + "\x00" + event.Location.Recovery
+		view := c.recoveries[key]
+		view.Pipeline, view.Stage, view.Step, view.Name = event.Location.Pipeline, event.Location.Stage, event.Location.Step, event.Location.Recovery
+		if event.Phase == pipeflow.ObservationStarted {
+			view.Activations++
+		}
+		if event.Phase == pipeflow.ObservationCompleted {
+			view.Completed++
+		}
+		if event.Phase == pipeflow.ObservationFailed {
+			view.Failed++
+		}
+		switch event.Location.RecoveryDecision {
+		case pipeflow.RecoveryRetryStep:
+			view.RetryStep++
+		case pipeflow.RecoveryFailStep:
+			view.FailStep++
+		case pipeflow.RecoveryFailStage:
+			view.FailStage++
+		case pipeflow.RecoveryFailPipeline:
+			view.FailPipeline++
+		}
+		view.LastStatus, view.LastSeen = event.Status, event.OccurredAt
+		c.recoveries[key] = view
+	case pipeflow.ObservationCircuit:
+		view := c.circuits[event.Location.Dependency]
+		view.Dependency, view.State, view.LastSeen = event.Location.Dependency, event.Location.CircuitState, event.OccurredAt
+		view.Events++
+		if event.Phase == pipeflow.ObservationFailed {
+			view.Failures++
+		}
+		if event.Location.ShortCircuited {
+			view.ShortCircuits++
+		}
+		if event.Location.Probe {
+			view.Probes++
+		}
+		c.circuits[view.Dependency] = view
+	case pipeflow.ObservationIdempotency:
+		view := c.idempotency[event.Location.Guard]
+		view.Guard, view.LastSeen = event.Location.Guard, event.OccurredAt
+		switch event.Location.IdempotencyOutcome {
+		case pipeflow.IdempotencyExecuted:
+			view.Executed++
+		case pipeflow.IdempotencyDuplicateCompleted:
+			view.DuplicateCompleted++
+		case pipeflow.IdempotencyDuplicateInProgress:
+			view.DuplicateInProgress++
+		case pipeflow.IdempotencyFailedReleasable:
+			view.FailedReleasable++
+		case pipeflow.IdempotencyStoreFailure:
+			view.StoreFailures++
+		}
+		c.idempotency[view.Guard] = view
 	}
 }
 
@@ -376,6 +479,15 @@ func (c *Collector) Snapshot() Snapshot {
 		}
 		result.Queues = append(result.Queues, QueueView{Name: name + ".queue", Worker: name, Pipeline: state.Pipeline, Depth: state.QueueDepth, Capacity: state.BufferCapacity, MaxInFlight: state.MaxInFlight, InFlight: state.InFlight, Utilization: utilization})
 	}
+	for _, view := range c.recoveries {
+		result.Recoveries = append(result.Recoveries, view)
+	}
+	for _, view := range c.circuits {
+		result.Circuits = append(result.Circuits, view)
+	}
+	for _, view := range c.idempotency {
+		result.Idempotency = append(result.Idempotency, view)
+	}
 	sortSnapshot(&result)
 	return result
 }
@@ -419,4 +531,7 @@ func sortSnapshot(s *Snapshot) {
 	sort.Slice(s.Profiles, func(i, j int) bool { return s.Profiles[i].Total > s.Profiles[j].Total })
 	sort.Slice(s.Workers, func(i, j int) bool { return s.Workers[i].Name < s.Workers[j].Name })
 	sort.Slice(s.Queues, func(i, j int) bool { return s.Queues[i].Name < s.Queues[j].Name })
+	sort.Slice(s.Recoveries, func(i, j int) bool { return s.Recoveries[i].Name < s.Recoveries[j].Name })
+	sort.Slice(s.Circuits, func(i, j int) bool { return s.Circuits[i].Dependency < s.Circuits[j].Dependency })
+	sort.Slice(s.Idempotency, func(i, j int) bool { return s.Idempotency[i].Guard < s.Idempotency[j].Guard })
 }

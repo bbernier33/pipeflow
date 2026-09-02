@@ -127,6 +127,15 @@ func (d *lifecycleDispatcher) emitAttempt(stage, parallel, branch, step string, 
 	d.observation.emit(ObservationAttempt, phase, ObservationLocation{RunID: d.runID, Pipeline: d.pipeline, Stage: stage, Step: step, Role: role, Parallel: parallel, Branch: branch, Subflow: d.subflow, Recovery: d.recovery, RecoveryAttempt: d.recoveryAttempt, Poll: poll, Attempt: attempt}, status, err)
 }
 
+func (d *lifecycleDispatcher) emitOperational(scope ObservationScope, stage, parallel, branch, step string, role StepRole, phase ObservationPhase, status Status, err error, decorate func(*ObservationLocation)) {
+	if d == nil || d.observation == nil {
+		return
+	}
+	location := ObservationLocation{RunID: d.runID, Pipeline: d.pipeline, Stage: stage, Step: step, Role: role, Parallel: parallel, Branch: branch, Subflow: d.subflow, Recovery: d.recovery, RecoveryAttempt: d.recoveryAttempt}
+	decorate(&location)
+	d.observation.emit(scope, phase, location, status, err)
+}
+
 func (d *lifecycleDispatcher) emitStep(eventType LifecycleEventType, stage, parallel, branch, step string, role StepRole, status Status, err error) error {
 	if d == nil {
 		return nil
@@ -169,7 +178,7 @@ func (d *lifecycleDispatcher) observeLifecycle(event LifecycleEvent) {
 	if scope == "" {
 		return
 	}
-	d.observation.emit(scope, phase, ObservationLocation{RunID: event.RunID, Pipeline: event.Pipeline, Stage: event.Stage, Step: event.Step, Role: event.Role, Parallel: event.Parallel, Branch: event.Branch, Subflow: event.Subflow, Background: event.Background, Recovery: event.Recovery, RecoveryAttempt: event.RecoveryAttempt}, event.Status, event.Err)
+	d.observation.emit(scope, phase, ObservationLocation{RunID: event.RunID, Pipeline: event.Pipeline, Stage: event.Stage, Step: event.Step, Role: event.Role, Parallel: event.Parallel, Branch: event.Branch, Subflow: event.Subflow, Background: event.Background, Recovery: event.Recovery, RecoveryAttempt: event.RecoveryAttempt, RecoveryDecision: event.RecoveryDecision}, event.Status, event.Err)
 }
 
 func observationForLifecycle(t LifecycleEventType) (ObservationScope, ObservationPhase) {

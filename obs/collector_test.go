@@ -164,6 +164,60 @@ func TestTrackWorkerValidatesRegistration(t *testing.T) {
 	}
 }
 
+func TestCollectorDerivesResilienceViews(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{})
+
+	var recoveryCalls int
+	recovery := pipeflow.NewRecoveryStage("refresh",
+		pipeflow.NewStep("repair", func(pipeflow.Failure) error { return nil }),
+		pipeflow.NewStep("decide", func(pipeflow.Failure) (pipeflow.RecoveryDecision, error) { return pipeflow.RecoveryRetryStep, nil }),
+	)
+	recoveryPipeline := pipeflow.NewPipeline("recovery-p", pipeflow.NewStage("s",
+		pipeflow.NewStep("fetch", func() error {
+			recoveryCalls++
+			if recoveryCalls == 1 {
+				return errors.New("expired")
+			}
+			return nil
+		}).WithRecovery(recovery, pipeflow.RecoveryPolicy{MaxAttempts: 1}),
+	)).WithObserver(collector)
+	if _, err := recoveryPipeline.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	dependencyErr := errors.New("dependency")
+	breaker, err := pipeflow.NewCircuitBreaker("provider", pipeflow.CircuitBreakerPolicy{FailureThreshold: 1, ObservationWindow: time.Minute, OpenDuration: time.Minute, HalfOpenMaxProbes: 1, IsFailure: func(err error) bool { return errors.Is(err, dependencyErr) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	circuitPipeline := pipeflow.NewPipeline("circuit-p", pipeflow.NewStage("s", pipeflow.NewStep("call", func() error { return dependencyErr }).WithCircuitBreaker(breaker))).WithObserver(collector)
+	_, _ = circuitPipeline.Run(context.Background())
+	_, _ = circuitPipeline.Run(context.Background())
+
+	guard, err := pipeflow.NewIdempotencyGuard("payments", pipeflow.NewMemoryIdempotencyStore(), func(value string) string { return value })
+	if err != nil {
+		t.Fatal(err)
+	}
+	idempotentPipeline := pipeflow.NewPipeline("idempotency-p", pipeflow.NewStage("s", pipeflow.NewStep("charge", func(string) error { return nil }).WithIdempotencyGuard(guard))).WithObserver(collector)
+	if _, err := idempotentPipeline.Run(context.Background(), "order-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := idempotentPipeline.Run(context.Background(), "order-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := collector.Snapshot()
+	if len(snapshot.Recoveries) != 1 || snapshot.Recoveries[0].Activations != 1 || snapshot.Recoveries[0].RetryStep != 1 {
+		t.Fatalf("recoveries=%+v", snapshot.Recoveries)
+	}
+	if len(snapshot.Circuits) != 1 || snapshot.Circuits[0].State != pipeflow.CircuitOpen || snapshot.Circuits[0].Failures != 1 || snapshot.Circuits[0].ShortCircuits != 1 {
+		t.Fatalf("circuits=%+v", snapshot.Circuits)
+	}
+	if len(snapshot.Idempotency) != 1 || snapshot.Idempotency[0].Executed != 1 || snapshot.Idempotency[0].DuplicateCompleted != 1 {
+		t.Fatalf("idempotency=%+v", snapshot.Idempotency)
+	}
+}
+
 func TestCollectorSnapshotIsDetached(t *testing.T) {
 	collector := obs.NewCollector(obs.Options{})
 	collector.ObserveTrace(pipeflow.TraceEvent{Scope: pipeflow.ObservationPipeline, Phase: pipeflow.ObservationStarted, Location: pipeflow.ObservationLocation{RunID: "r", Pipeline: "p"}, Status: pipeflow.StatusRunning, OccurredAt: time.Now()})

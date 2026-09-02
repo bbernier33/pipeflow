@@ -136,10 +136,16 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		}
 		claim, claimErr := s.idempotency.store.Claim(goCtx, s.idempotency.storageKey(key))
 		if claimErr != nil {
+			lifecycle.emitOperational(ObservationIdempotency, stageName, parallelName, branchName, s.name, s.Role(), ObservationFailed, StatusFailed, claimErr, func(location *ObservationLocation) {
+				location.Guard, location.IdempotencyOutcome = s.idempotency.name, IdempotencyStoreFailure
+			})
 			return nil, annotateExecutionError(claimErr, "", "", s.name, 0)
 		}
 		switch claim {
 		case IdempotencyCompleted:
+			lifecycle.emitOperational(ObservationIdempotency, stageName, parallelName, branchName, s.name, s.Role(), ObservationSkipped, StatusSkipped, nil, func(location *ObservationLocation) {
+				location.Guard, location.IdempotencyOutcome = s.idempotency.name, IdempotencyDuplicateCompleted
+			})
 			if recorder != nil {
 				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Outcome: IdempotencyDuplicateCompleted})
 				recorder.skipStep(reportPath)
@@ -152,10 +158,14 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 			skipped = true
 			return input, nil
 		case IdempotencyInProgress:
+			duplicateErr := &IdempotencyInProgressError{Guard: s.idempotency.name}
+			lifecycle.emitOperational(ObservationIdempotency, stageName, parallelName, branchName, s.name, s.Role(), ObservationFailed, StatusFailed, duplicateErr, func(location *ObservationLocation) {
+				location.Guard, location.IdempotencyOutcome = s.idempotency.name, IdempotencyDuplicateInProgress
+			})
 			if recorder != nil {
 				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Outcome: IdempotencyDuplicateInProgress})
 			}
-			return nil, annotateExecutionError(&IdempotencyInProgressError{Guard: s.idempotency.name}, "", "", s.name, 0)
+			return nil, annotateExecutionError(duplicateErr, "", "", s.name, 0)
 		case IdempotencyClaimed:
 			if recorder != nil {
 				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Claim: IdempotencyClaimed})
@@ -178,6 +188,13 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 			if recorder != nil {
 				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Claim: IdempotencyClaimed, Outcome: outcome, Error: storeErr})
 			}
+			phase, status := ObservationCompleted, StatusCompleted
+			if outcome == IdempotencyFailedReleasable || outcome == IdempotencyStoreFailure {
+				phase, status = ObservationFailed, StatusFailed
+			}
+			lifecycle.emitOperational(ObservationIdempotency, stageName, parallelName, branchName, s.name, s.Role(), phase, status, storeErr, func(location *ObservationLocation) {
+				location.Guard, location.IdempotencyOutcome = s.idempotency.name, outcome
+			})
 			if storeErr != nil {
 				output = nil
 				err = errors.Join(err, annotateExecutionError(storeErr, "", "", s.name, 0))
@@ -189,6 +206,10 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		var circuitErr error
 		permit, circuitErr = s.circuit.acquire(time.Now())
 		if circuitErr != nil {
+			state := s.circuit.Snapshot().State
+			lifecycle.emitOperational(ObservationCircuit, stageName, parallelName, branchName, s.name, s.Role(), ObservationSkipped, StatusFailed, circuitErr, func(location *ObservationLocation) {
+				location.Dependency, location.CircuitState, location.ShortCircuited = s.circuit.name, state, true
+			})
 			if recorder != nil {
 				recorder.setCircuit(reportPath, CircuitReport{Dependency: s.circuit.name, StateBefore: s.circuit.Snapshot().State, StateAfter: s.circuit.Snapshot().State, ShortCircuited: true})
 			}
@@ -196,6 +217,13 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		}
 		defer func() {
 			after, predicateErr := permit.finish(err)
+			phase, status := ObservationCompleted, StatusCompleted
+			if err != nil || predicateErr != nil {
+				phase, status = ObservationFailed, StatusFailed
+			}
+			lifecycle.emitOperational(ObservationCircuit, stageName, parallelName, branchName, s.name, s.Role(), phase, status, errors.Join(err, predicateErr), func(location *ObservationLocation) {
+				location.Dependency, location.CircuitState, location.Probe = s.circuit.name, after.State, permit.probe
+			})
 			if recorder != nil {
 				recorder.setCircuit(reportPath, CircuitReport{Dependency: s.circuit.name, StateBefore: permit.before.State, StateAfter: after.State, Probe: permit.probe})
 			}

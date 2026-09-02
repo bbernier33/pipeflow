@@ -33,8 +33,9 @@ not contain flowing values, error messages, credentials, or report payloads.
 - Core emits raw samples, not aggregates such as p95 or retry rate.
 - Runtime CPU/memory/GC correlation can be performed by a consumer using event
   timestamps; automatic runtime sampling is not part of v1.2.
-- `Recovery` becomes an observation scope when Core++ introduces that execution
-  primitive. The contract does not invent Recovery before it exists.
+- Recovery, Circuit, and Idempotency use explicit observation scopes now that
+  those Core++ primitives exist. Their locations contain classifications only,
+  never business values, idempotency keys, or error messages.
 - Observation is synchronous and failure-isolated. A slow observer can add
   latency, so buffering belongs in an adapter whose loss/backpressure policy is
   explicit.

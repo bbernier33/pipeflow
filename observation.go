@@ -11,15 +11,17 @@ import (
 type ObservationScope string
 
 const (
-	ObservationPipeline   ObservationScope = "pipeline"
-	ObservationStage      ObservationScope = "stage"
-	ObservationStep       ObservationScope = "step"
-	ObservationAttempt    ObservationScope = "attempt"
-	ObservationParallel   ObservationScope = "parallel"
-	ObservationBranch     ObservationScope = "branch"
-	ObservationSubflow    ObservationScope = "subflow"
-	ObservationBackground ObservationScope = "background"
-	ObservationRecovery   ObservationScope = "recovery"
+	ObservationPipeline    ObservationScope = "pipeline"
+	ObservationStage       ObservationScope = "stage"
+	ObservationStep        ObservationScope = "step"
+	ObservationAttempt     ObservationScope = "attempt"
+	ObservationParallel    ObservationScope = "parallel"
+	ObservationBranch      ObservationScope = "branch"
+	ObservationSubflow     ObservationScope = "subflow"
+	ObservationBackground  ObservationScope = "background"
+	ObservationRecovery    ObservationScope = "recovery"
+	ObservationCircuit     ObservationScope = "circuit"
+	ObservationIdempotency ObservationScope = "idempotency"
 )
 
 // ObservationPhase describes a timestamped execution transition.
@@ -36,8 +38,13 @@ const (
 // ObservationLocation identifies an execution unit without carrying business data.
 type ObservationLocation struct {
 	RunID, Pipeline, Stage, Step, Parallel, Branch, Subflow, Background, Recovery string
+	Dependency, Guard                                                             string
 	Role                                                                          StepRole
 	Attempt, Poll, RecoveryAttempt                                                int
+	RecoveryDecision                                                              RecoveryDecision
+	CircuitState                                                                  CircuitState
+	IdempotencyOutcome                                                            IdempotencyOutcome
+	Probe, ShortCircuited                                                         bool
 }
 
 // ObservationError classifies a failure without exposing its message or payload.

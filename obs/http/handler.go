@@ -60,6 +60,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, workerDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Workers: snapshot.Workers})
 	case "/v1/queues":
 		writeJSON(w, r, http.StatusOK, queueDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Queues: snapshot.Queues})
+	case "/v1/resilience":
+		writeJSON(w, r, http.StatusOK, resilienceDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Recoveries: snapshot.Recoveries, Circuits: snapshot.Circuits, Idempotency: snapshot.Idempotency})
 	default:
 		writeError(w, r, http.StatusNotFound, "not_found")
 	}
@@ -90,6 +92,13 @@ type queueDocument struct {
 	CapturedAt time.Time       `json:"captured_at"`
 	Queues     []obs.QueueView `json:"queues"`
 }
+type resilienceDocument struct {
+	Schema      string                `json:"schema"`
+	CapturedAt  time.Time             `json:"captured_at"`
+	Recoveries  []obs.RecoveryView    `json:"recoveries"`
+	Circuits    []obs.CircuitView     `json:"circuits"`
+	Idempotency []obs.IdempotencyView `json:"idempotency"`
+}
 type snapshotWire struct {
 	Schema          string                 `json:"schema"`
 	CapturedAt      time.Time              `json:"captured_at"`
@@ -100,6 +109,9 @@ type snapshotWire struct {
 	Profiles        []obs.ProfileAggregate `json:"profiles"`
 	Workers         []obs.WorkerView       `json:"workers"`
 	Queues          []obs.QueueView        `json:"queues"`
+	Recoveries      []obs.RecoveryView     `json:"recoveries"`
+	Circuits        []obs.CircuitView      `json:"circuits"`
+	Idempotency     []obs.IdempotencyView  `json:"idempotency"`
 	Traces          []traceWire            `json:"traces"`
 	RecentMetrics   []metricWire           `json:"recent_metrics"`
 	RecentProfiles  []profileWire          `json:"recent_profiles"`
@@ -108,19 +120,26 @@ type snapshotWire struct {
 	DroppedProfiles uint64                 `json:"dropped_profiles"`
 }
 type locationWire struct {
-	RunID           string            `json:"run_id,omitempty"`
-	Pipeline        string            `json:"pipeline,omitempty"`
-	Stage           string            `json:"stage,omitempty"`
-	Step            string            `json:"step,omitempty"`
-	Parallel        string            `json:"parallel,omitempty"`
-	Branch          string            `json:"branch,omitempty"`
-	Subflow         string            `json:"subflow,omitempty"`
-	Background      string            `json:"background,omitempty"`
-	Recovery        string            `json:"recovery,omitempty"`
-	Role            pipeflow.StepRole `json:"role,omitempty"`
-	Attempt         int               `json:"attempt,omitempty"`
-	Poll            int               `json:"poll,omitempty"`
-	RecoveryAttempt int               `json:"recovery_attempt,omitempty"`
+	RunID              string                      `json:"run_id,omitempty"`
+	Pipeline           string                      `json:"pipeline,omitempty"`
+	Stage              string                      `json:"stage,omitempty"`
+	Step               string                      `json:"step,omitempty"`
+	Parallel           string                      `json:"parallel,omitempty"`
+	Branch             string                      `json:"branch,omitempty"`
+	Subflow            string                      `json:"subflow,omitempty"`
+	Background         string                      `json:"background,omitempty"`
+	Recovery           string                      `json:"recovery,omitempty"`
+	Role               pipeflow.StepRole           `json:"role,omitempty"`
+	Attempt            int                         `json:"attempt,omitempty"`
+	Poll               int                         `json:"poll,omitempty"`
+	RecoveryAttempt    int                         `json:"recovery_attempt,omitempty"`
+	RecoveryDecision   pipeflow.RecoveryDecision   `json:"recovery_decision,omitempty"`
+	Dependency         string                      `json:"dependency,omitempty"`
+	Guard              string                      `json:"guard,omitempty"`
+	CircuitState       pipeflow.CircuitState       `json:"circuit_state,omitempty"`
+	IdempotencyOutcome pipeflow.IdempotencyOutcome `json:"idempotency_outcome,omitempty"`
+	Probe              bool                        `json:"probe,omitempty"`
+	ShortCircuited     bool                        `json:"short_circuited,omitempty"`
 }
 type errorWire struct {
 	Type  string `json:"type"`
@@ -153,7 +172,7 @@ type profileWire struct {
 }
 
 func snapshotDocument(s obs.Snapshot) snapshotWire {
-	w := snapshotWire{Schema: SchemaVersion, CapturedAt: s.CapturedAt, Pipelines: s.Pipelines, Runs: s.Runs, Errors: s.Errors, Metrics: s.Metrics, Profiles: s.Profiles, Workers: s.Workers, Queues: s.Queues, DroppedTraces: s.DroppedTraces, DroppedMetrics: s.DroppedMetrics, DroppedProfiles: s.DroppedProfiles}
+	w := snapshotWire{Schema: SchemaVersion, CapturedAt: s.CapturedAt, Pipelines: s.Pipelines, Runs: s.Runs, Errors: s.Errors, Metrics: s.Metrics, Profiles: s.Profiles, Workers: s.Workers, Queues: s.Queues, Recoveries: s.Recoveries, Circuits: s.Circuits, Idempotency: s.Idempotency, DroppedTraces: s.DroppedTraces, DroppedMetrics: s.DroppedMetrics, DroppedProfiles: s.DroppedProfiles}
 	for _, v := range s.Traces {
 		e := (*errorWire)(nil)
 		if v.Error != nil {
@@ -170,7 +189,7 @@ func snapshotDocument(s obs.Snapshot) snapshotWire {
 	return w
 }
 func wireLocation(v pipeflow.ObservationLocation) locationWire {
-	return locationWire{RunID: v.RunID, Pipeline: v.Pipeline, Stage: v.Stage, Step: v.Step, Parallel: v.Parallel, Branch: v.Branch, Subflow: v.Subflow, Background: v.Background, Recovery: v.Recovery, Role: v.Role, Attempt: v.Attempt, Poll: v.Poll, RecoveryAttempt: v.RecoveryAttempt}
+	return locationWire{RunID: v.RunID, Pipeline: v.Pipeline, Stage: v.Stage, Step: v.Step, Parallel: v.Parallel, Branch: v.Branch, Subflow: v.Subflow, Background: v.Background, Recovery: v.Recovery, Role: v.Role, Attempt: v.Attempt, Poll: v.Poll, RecoveryAttempt: v.RecoveryAttempt, RecoveryDecision: v.RecoveryDecision, Dependency: v.Dependency, Guard: v.Guard, CircuitState: v.CircuitState, IdempotencyOutcome: v.IdempotencyOutcome, Probe: v.Probe, ShortCircuited: v.ShortCircuited}
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code string) {

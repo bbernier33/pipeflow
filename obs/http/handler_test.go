@@ -66,7 +66,7 @@ func TestSnapshotEndpointUsesVersionedPayloadFreeJSON(t *testing.T) {
 
 func TestHealthAndLivenessEndpoints(t *testing.T) {
 	handler := observedHandler(t, obshttp.Options{})
-	for _, path := range []string{"/healthz", "/v1/health", "/v1/workers", "/v1/queues"} {
+	for _, path := range []string{"/healthz", "/v1/health", "/v1/workers", "/v1/queues", "/v1/resilience"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {

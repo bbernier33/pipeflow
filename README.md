@@ -179,6 +179,22 @@ outcome counters. `Snapshot().Queues` reports depth, capacity, utilization,
 and max-in-flight state. These views contain no queued values and provide no
 control over the Worker.
 
+Resilience telemetry is also derived automatically from observed executions:
+
+```go
+snapshot := collector.Snapshot()
+for _, circuit := range snapshot.Circuits {
+    log.Printf("dependency=%s state=%s short_circuits=%d",
+        circuit.Dependency, circuit.State, circuit.ShortCircuits)
+}
+```
+
+`Snapshot().Recoveries` summarizes activations, failures, and decisions;
+`Snapshot().Circuits` summarizes dependency state, failures, probes, and
+short-circuits; `Snapshot().Idempotency` summarizes executions, duplicates,
+releasable failures, and store failures. Stable keys and business values are
+never emitted.
+
 The initial in-process collector provides bounded recent telemetry, run and
 pipeline views, explainable basic health, structurally grouped error classes,
 metric aggregates, and profile totals. Snapshots are detached and read-only;
@@ -202,12 +218,13 @@ mux.Handle("/operations/", http.StripPrefix("/operations", handler))
 ```
 
 The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
-`/v1/queues`, and `/v1/snapshot`. Responses are versioned, payload-free JSON with caching
+`/v1/queues`, `/v1/resilience`, and `/v1/snapshot`. Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
 address, server lifecycle, and request logging. Persistent history,
 resilience-specific views, runtime resources, exporters, streaming, and the
 TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
 [Queue and Worker Operational Views](adr/QueueWorkerOperationalViews.md), and
+[Resilience Operational Views](adr/ResilienceOperationalViews.md), and
 [Observation HTTP Transport](adr/ObservationHTTPTransport.md).
 
 ## Design Goals
