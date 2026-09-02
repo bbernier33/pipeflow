@@ -5,28 +5,38 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	pipeflow "github.com/bbernier33/pipeflow"
 	"github.com/bbernier33/pipeflow/obs"
+	"github.com/bbernier33/pipeflow/obs/history"
 )
 
 const SchemaVersion = "pipeflow.obs.http/v1"
 
 type Authorizer func(*http.Request) bool
 
-type Options struct{ Authorize Authorizer }
+type HistorySource interface {
+	Query(history.Query) ([]obs.Snapshot, error)
+}
+
+type Options struct {
+	Authorize Authorizer
+	History   HistorySource
+}
 
 type Handler struct {
 	source    obs.Source
 	authorize Authorizer
+	history   HistorySource
 }
 
 func NewHandler(source obs.Source, options Options) (*Handler, error) {
 	if source == nil {
 		return nil, errors.New("pipeflow obs http: nil source")
 	}
-	return &Handler{source: source, authorize: options.Authorize}, nil
+	return &Handler{source: source, authorize: options.Authorize, history: options.History}, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +54,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/healthz" {
 		writeJSON(w, r, http.StatusOK, map[string]any{"schema": SchemaVersion, "status": "ok"})
+		return
+	}
+	if r.URL.Path == "/v1/history" {
+		h.serveHistory(w, r)
 		return
 	}
 	var snapshot obs.Snapshot
@@ -65,6 +79,62 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, r, http.StatusNotFound, "not_found")
 	}
+}
+
+func (h *Handler) serveHistory(w http.ResponseWriter, r *http.Request) {
+	if h.history == nil {
+		writeError(w, r, http.StatusNotFound, "history_unavailable")
+		return
+	}
+	query := history.Query{Limit: 100, NewestFirst: true}
+	var err error
+	if value := r.URL.Query().Get("from"); value != "" {
+		query.From, err = time.Parse(time.RFC3339Nano, value)
+	}
+	if err == nil {
+		if value := r.URL.Query().Get("to"); value != "" {
+			query.To, err = time.Parse(time.RFC3339Nano, value)
+		}
+	}
+	if err == nil {
+		if value := r.URL.Query().Get("limit"); value != "" {
+			query.Limit, err = strconv.Atoi(value)
+		}
+	}
+	if err != nil || query.Limit < 1 || query.Limit > 1000 {
+		writeError(w, r, http.StatusBadRequest, "invalid_history_query")
+		return
+	}
+	if order := r.URL.Query().Get("order"); order == "asc" {
+		query.NewestFirst = false
+	} else if order != "" && order != "desc" {
+		writeError(w, r, http.StatusBadRequest, "invalid_history_query")
+		return
+	}
+	var snapshots []obs.Snapshot
+	if !safeHistoryQuery(h.history, query, &snapshots) {
+		writeError(w, r, http.StatusInternalServerError, "history_unavailable")
+		return
+	}
+	document := historyDocument{Schema: SchemaVersion, Snapshots: make([]snapshotWire, 0, len(snapshots))}
+	for _, snapshot := range snapshots {
+		document.Snapshots = append(document.Snapshots, snapshotDocument(snapshot))
+	}
+	writeJSON(w, r, http.StatusOK, document)
+}
+
+func safeHistoryQuery(source HistorySource, query history.Query, target *[]obs.Snapshot) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	values, err := source.Query(query)
+	if err != nil {
+		return false
+	}
+	*target = values
+	return true
 }
 
 func safeSnapshot(source obs.Source, target *obs.Snapshot) (ok bool) {
@@ -98,6 +168,10 @@ type resilienceDocument struct {
 	Recoveries  []obs.RecoveryView    `json:"recoveries"`
 	Circuits    []obs.CircuitView     `json:"circuits"`
 	Idempotency []obs.IdempotencyView `json:"idempotency"`
+}
+type historyDocument struct {
+	Schema    string         `json:"schema"`
+	Snapshots []snapshotWire `json:"snapshots"`
 }
 type snapshotWire struct {
 	Schema          string                 `json:"schema"`

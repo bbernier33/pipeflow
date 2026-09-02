@@ -11,6 +11,7 @@ import (
 
 	pipeflow "github.com/bbernier33/pipeflow"
 	"github.com/bbernier33/pipeflow/obs"
+	"github.com/bbernier33/pipeflow/obs/history"
 	obshttp "github.com/bbernier33/pipeflow/obs/http"
 )
 
@@ -158,5 +159,50 @@ func TestConcurrentRequests(t *testing.T) {
 func TestNewHandlerRejectsNilSource(t *testing.T) {
 	if _, err := obshttp.NewHandler(nil, obshttp.Options{}); err == nil {
 		t.Fatal("expected nil source error")
+	}
+}
+
+func TestHistoryEndpoint(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{})
+	store, err := history.Open(t.TempDir(), history.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(collector.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := obshttp.NewHandler(collector, obshttp.Options{History: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/history?limit=1&order=desc", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var document struct {
+		Schema    string            `json:"schema"`
+		Snapshots []json.RawMessage `json:"snapshots"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.Schema != obshttp.SchemaVersion || len(document.Snapshots) != 1 {
+		t.Fatalf("document=%+v", document)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/history?limit=1001", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid status=%d", response.Code)
+	}
+}
+
+func TestHistoryEndpointIsOptional(t *testing.T) {
+	handler := observedHandler(t, obshttp.Options{})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/history", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status=%d", response.Code)
 	}
 }

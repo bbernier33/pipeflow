@@ -195,6 +195,28 @@ short-circuits; `Snapshot().Idempotency` summarizes executions, duplicates,
 releasable failures, and store failures. Stable keys and business values are
 never emitted.
 
+Operational history is opt-in and recorded outside execution:
+
+```go
+store, err := history.Open("./pipeflow-history", history.Options{
+    MaxSnapshots: 10_000,
+    MaxAge:       7 * 24 * time.Hour,
+    Sync:         true,
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+// The application chooses the recording interval or incident boundaries.
+if err := store.Append(collector.Snapshot()); err != nil {
+    log.Printf("record observation history: %v", err)
+}
+```
+
+Records are immutable, versioned, payload-free snapshot files. Writes use a
+temporary file and atomic rename; count/age retention is explicit. The store
+has no background goroutine and is never an execution dependency.
+
 The initial in-process collector provides bounded recent telemetry, run and
 pipeline views, explainable basic health, structurally grouped error classes,
 metric aggregates, and profile totals. Snapshots are detached and read-only;
@@ -208,6 +230,7 @@ handler, err := obshttp.NewHandler(collector, obshttp.Options{
     Authorize: func(r *http.Request) bool {
         return r.Header.Get("Authorization") == "Bearer "+token
     },
+    History: store,
 })
 if err != nil {
     log.Fatal(err)
@@ -218,13 +241,16 @@ mux.Handle("/operations/", http.StripPrefix("/operations", handler))
 ```
 
 The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
-`/v1/queues`, `/v1/resilience`, and `/v1/snapshot`. Responses are versioned, payload-free JSON with caching
+`/v1/queues`, `/v1/resilience`, optional `/v1/history`, and `/v1/snapshot`.
+History accepts RFC3339 `from`/`to`, `limit` (maximum 1000), and `order=asc|desc`.
+Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
 address, server lifecycle, and request logging. Persistent history,
 resilience-specific views, runtime resources, exporters, streaming, and the
 TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
 [Queue and Worker Operational Views](adr/QueueWorkerOperationalViews.md), and
 [Resilience Operational Views](adr/ResilienceOperationalViews.md), and
+[Persistent Observation History](adr/PersistentObservationHistory.md), and
 [Observation HTTP Transport](adr/ObservationHTTPTransport.md).
 
 ## Design Goals

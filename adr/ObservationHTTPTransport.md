@@ -13,6 +13,7 @@ The transport exposes:
 - `GET` and `HEAD /v1/workers` for tracked Worker runtime state;
 - `GET` and `HEAD /v1/queues` for tracked Worker queue state;
 - `GET` and `HEAD /v1/resilience` for Recovery, Circuit, and Idempotency views;
+- optional `GET` and `HEAD /v1/history` for bounded persistent snapshots;
 - `GET` and `HEAD /v1/snapshot` for the complete bounded snapshot.
 
 Every document carries schema `pipeflow.obs.http/v1`. Transport-owned wire
@@ -30,6 +31,9 @@ including liveness, when configured.
 The application remains responsible for its bind address, TLS, server
 lifecycle, authentication implementation, request limits, and access logs.
 Pipeflow does not silently open a network listener.
+
+When configured with a History source, `/v1/history` supports bounded time
+range queries. The handler never writes or prunes history.
 
 ## Deferred
 
