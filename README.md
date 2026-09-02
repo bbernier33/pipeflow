@@ -8,6 +8,9 @@ Pipeflow Core v1.0 is stable and intended for reuse across backend services,
 data processing, IoT, realtime applications, game backends, and other Go
 workloads.
 
+Development toward v2 has started with opt-in Operational Recovery. The v1 API
+remains frozen; v2 work is additive and unreleased.
+
 ## Project Status
 
 Pipeflow Core v1.0.0 is released. Its public execution API and documented
@@ -66,6 +69,31 @@ Without a shared execution layer, projects repeatedly implement:
 - observability hooks
 
 Pipeflow aims to provide these capabilities as reusable Go primitives so applications can focus on their domain logic.
+
+## Operational Recovery (v2 development)
+
+Operational Recovery runs only after a Step's normal retry/polling behavior is
+exhausted. It receives failure metadata, repairs execution conditions, and
+returns an explicit control decision. It never replaces the flowing business
+value.
+
+```go
+fetch := pipeflow.NewStep("fetch", fetchOrders).WithRecovery(
+    pipeflow.NewRecoveryStage("refresh credentials",
+        pipeflow.NewStep("refresh", func(f pipeflow.Failure) error {
+            return refreshCredentials(f.Err)
+        }),
+        pipeflow.NewStep("decide", func(pipeflow.Failure) (pipeflow.RecoveryDecision, error) {
+            return pipeflow.RecoveryRetryStep, nil
+        }),
+    ),
+    pipeflow.RecoveryPolicy{MaxAttempts: 1, Timeout: 30 * time.Second},
+)
+```
+
+Recovery is bounded and run-scoped. Concurrent recoveries do not single-flight;
+shared application state must use normal Go synchronization. See
+[Operational Recovery](adr/OperationalRecovery.md).
 
 ## Design Goals
 

@@ -40,6 +40,31 @@ func ExamplePipeline_Run_valueFlow() {
 	// result 22
 }
 
+func ExampleStep_WithRecovery() {
+	credentialsValid := false
+	fetch := pipeflow.NewStep("fetch", func() (string, error) {
+		if !credentialsValid {
+			return "", errors.New("credentials expired")
+		}
+		return "orders", nil
+	}).WithRecovery(
+		pipeflow.NewRecoveryStage("refresh credentials",
+			pipeflow.NewStep("refresh", func(failure pipeflow.Failure) error {
+				credentialsValid = true
+				return nil
+			}),
+			pipeflow.NewStep("retry", func(pipeflow.Failure) (pipeflow.RecoveryDecision, error) {
+				return pipeflow.RecoveryRetryStep, nil
+			}),
+		),
+		pipeflow.RecoveryPolicy{MaxAttempts: 1, Timeout: time.Second},
+	)
+	pipeline := pipeflow.NewPipeline("imports", pipeflow.NewStage("load", fetch))
+	output, err := pipeline.Run(context.Background())
+	fmt.Println(output, err)
+	// Output: orders <nil>
+}
+
 func ExamplePipeline_ValidateInput() {
 	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("process",
 		pipeflow.NewStep("validate", func(orderID int) error { return nil }),

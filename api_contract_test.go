@@ -11,16 +11,18 @@ import (
 // Compile-time assignments intentionally pin the v1 method signatures used by
 // callers outside the pipeflow package.
 var (
-	_ func(string, ...pipeflow.Stage) pipeflow.Pipeline                                   = pipeflow.NewPipeline
-	_ func(string, ...pipeflow.StageItem) pipeflow.Stage                                  = pipeflow.NewStage
-	_ func(string, any, ...pipeflow.StepOption) *pipeflow.Step                            = pipeflow.NewStep
-	_ func(string, any, ...pipeflow.StepOption) *pipeflow.Step                            = pipeflow.NewSourceStep
-	_ func(string, any, ...pipeflow.StepOption) *pipeflow.Step                            = pipeflow.NewSinkStep
-	_ func(*pipeflow.Step) pipeflow.StepRole                                              = (*pipeflow.Step).Role
-	_ func([]*pipeflow.Step, ...pipeflow.ConcurrentStepsOption) *pipeflow.ConcurrentSteps = pipeflow.NewConcurrentSteps
-	_ func(string, ...*pipeflow.Step) pipeflow.Branch                                     = pipeflow.NewBranch
-	_ func(string, []pipeflow.Branch, ...pipeflow.ParallelOption) *pipeflow.Parallel      = pipeflow.NewParallel
-	_ func(string, ...pipeflow.Stage) *pipeflow.Subflow                                   = pipeflow.NewSubflow
+	_ func(string, ...pipeflow.Stage) pipeflow.Pipeline                                     = pipeflow.NewPipeline
+	_ func(string, ...pipeflow.StageItem) pipeflow.Stage                                    = pipeflow.NewStage
+	_ func(string, any, ...pipeflow.StepOption) *pipeflow.Step                              = pipeflow.NewStep
+	_ func(string, any, ...pipeflow.StepOption) *pipeflow.Step                              = pipeflow.NewSourceStep
+	_ func(string, any, ...pipeflow.StepOption) *pipeflow.Step                              = pipeflow.NewSinkStep
+	_ func(*pipeflow.Step) pipeflow.StepRole                                                = (*pipeflow.Step).Role
+	_ func([]*pipeflow.Step, ...pipeflow.ConcurrentStepsOption) *pipeflow.ConcurrentSteps   = pipeflow.NewConcurrentSteps
+	_ func(string, ...*pipeflow.Step) pipeflow.Branch                                       = pipeflow.NewBranch
+	_ func(string, []pipeflow.Branch, ...pipeflow.ParallelOption) *pipeflow.Parallel        = pipeflow.NewParallel
+	_ func(string, ...pipeflow.Stage) *pipeflow.Subflow                                     = pipeflow.NewSubflow
+	_ func(string, ...pipeflow.StageItem) *pipeflow.RecoveryStage                           = pipeflow.NewRecoveryStage
+	_ func(*pipeflow.Step, *pipeflow.RecoveryStage, pipeflow.RecoveryPolicy) *pipeflow.Step = (*pipeflow.Step).WithRecovery
 
 	_ func(*pipeflow.Pipeline, context.Context, ...any) (any, error)                                         = (*pipeflow.Pipeline).Run
 	_ func(*pipeflow.Pipeline, context.Context, ...any) (any, pipeflow.RunReport, error)                     = (*pipeflow.Pipeline).RunWithReport

@@ -776,6 +776,11 @@ func cloneStageItem(item StageItem) StageItem {
 			v := *typed.pollPolicy
 			c.pollPolicy = &v
 		}
+		if typed.recovery != nil {
+			v := *typed.recovery
+			v.stage = cloneStages([]Stage{typed.recovery.stage})[0]
+			c.recovery = &v
+		}
 		return &c
 	case *ConcurrentSteps:
 		c := *typed

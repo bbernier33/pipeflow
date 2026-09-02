@@ -19,6 +19,7 @@ const (
 	ObservationBranch     ObservationScope = "branch"
 	ObservationSubflow    ObservationScope = "subflow"
 	ObservationBackground ObservationScope = "background"
+	ObservationRecovery   ObservationScope = "recovery"
 )
 
 // ObservationPhase describes a timestamped execution transition.
@@ -34,9 +35,9 @@ const (
 
 // ObservationLocation identifies an execution unit without carrying business data.
 type ObservationLocation struct {
-	RunID, Pipeline, Stage, Step, Parallel, Branch, Subflow, Background string
-	Role                                                                StepRole
-	Attempt, Poll                                                       int
+	RunID, Pipeline, Stage, Step, Parallel, Branch, Subflow, Background, Recovery string
+	Role                                                                          StepRole
+	Attempt, Poll, RecoveryAttempt                                                int
 }
 
 // ObservationError classifies a failure without exposing its message or payload.

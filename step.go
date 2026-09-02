@@ -21,24 +21,26 @@ const (
 // Step adapts one supported ordinary Go function into a value-flow execution
 // unit.
 type Step struct {
-	name         string
-	role         StepRole
-	roleSet      bool
-	action       func(context.Context, *Context, any) (any, error)
-	retryPolicy  *RetryPolicy
-	inputType    reflect.Type
-	outputType   reflect.Type
-	flow         stepFlow
-	configErr    error
-	timeout      time.Duration
-	timeoutSet   bool
-	retrySet     bool
-	pollingSet   bool
-	rateLimitSet bool
-	pollPolicy   *compiledPollPolicy
-	condition    *compiledCondition
-	rateLimit    *RateLimitPolicy
-	metadata     *compiledMetadataExtractor
+	name           string
+	role           StepRole
+	roleSet        bool
+	action         func(context.Context, *Context, any) (any, error)
+	retryPolicy    *RetryPolicy
+	inputType      reflect.Type
+	outputType     reflect.Type
+	flow           stepFlow
+	configErr      error
+	timeout        time.Duration
+	timeoutSet     bool
+	retrySet       bool
+	pollingSet     bool
+	rateLimitSet   bool
+	pollPolicy     *compiledPollPolicy
+	condition      *compiledCondition
+	rateLimit      *RateLimitPolicy
+	metadata       *compiledMetadataExtractor
+	recovery       *RecoveryStage
+	recoveryPolicy RecoveryPolicy
 }
 
 // NewStep creates a Step from a supported ordinary Go function and options.
@@ -70,11 +72,6 @@ func (s *Step) Run(goCtx context.Context, ctx *Context, input any) (any, error) 
 
 func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *runRecorder, reportPath stepReportPath, lifecycle *lifecycleDispatcher, stageName, parallelName, branchName string) (output any, err error) {
 	skipped := false
-	if s.timeout > 0 {
-		var cancel context.CancelFunc
-		goCtx, cancel = context.WithTimeout(goCtx, s.timeout)
-		defer cancel()
-	}
 	if recorder != nil {
 		recorder.startStep(reportPath)
 		defer func() {
@@ -130,6 +127,38 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		return nil, annotateExecutionError(fmt.Errorf("input: %w", err), "", "", s.name, 0)
 	}
 	ctx.Logger().Info("Running step: " + s.name)
+	for recoveryAttempt := 0; ; recoveryAttempt++ {
+		normalCtx := goCtx
+		cancel := func() {}
+		if s.timeout > 0 {
+			normalCtx, cancel = context.WithTimeout(goCtx, s.timeout)
+		}
+		output, err = s.runNormal(normalCtx, ctx, input, recorder, reportPath, lifecycle, stageName, parallelName, branchName)
+		cancel()
+		if err == nil || s.recovery == nil {
+			return output, err
+		}
+		if parentErr := goCtx.Err(); parentErr != nil {
+			return nil, annotateExecutionError(parentErr, "", "", s.name, recoveryAttemptNumber(err))
+		}
+		if recoveryAttempt >= s.recoveryPolicy.MaxAttempts {
+			return nil, &RecoveryError{Stage: stageName, Step: s.name, Recovery: s.recovery.name, Attempt: recoveryAttempt, Decision: RecoveryFailStep, Original: err}
+		}
+		runID, pipeline := "", ""
+		if recorder != nil {
+			runID, pipeline = recorder.runIdentity()
+		}
+		failure := Failure{Err: err, RunID: runID, Pipeline: pipeline, Stage: stageName, Step: s.name, Attempt: recoveryAttemptNumber(err)}
+		decision, recoveryErr := s.runRecovery(goCtx, ctx, failure, recorder, reportPath, lifecycle, recoveryAttempt+1)
+		if recoveryErr != nil || decision != RecoveryRetryStep {
+			return nil, &RecoveryError{Pipeline: pipeline, Stage: stageName, Step: s.name, Recovery: s.recovery.name, Attempt: recoveryAttempt + 1, Decision: decision, Original: err, RecoveryErr: recoveryErr}
+		}
+	}
+}
+
+func recoveryAttemptNumber(err error) int { return recoveryAttempt(err) }
+
+func (s *Step) runNormal(goCtx context.Context, ctx *Context, input any, recorder *runRecorder, reportPath stepReportPath, lifecycle *lifecycleDispatcher, stageName, parallelName, branchName string) (output any, err error) {
 	if s.pollPolicy == nil {
 		output, err = s.runAttempts(goCtx, ctx, input, recorder, reportPath, 0, lifecycle, stageName, parallelName, branchName)
 		if err == nil {
@@ -212,6 +241,11 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 func (s *Step) validateFlow(current reflect.Type, known bool) (reflect.Type, bool, error) {
 	if s.configErr != nil {
 		return nil, false, s.configErr
+	}
+	if s.recovery != nil {
+		if err := s.recovery.validate(); err != nil {
+			return nil, false, err
+		}
 	}
 	if s.condition != nil && s.condition.predicateType != nil && known && (current == nil || !current.AssignableTo(s.condition.predicateType)) && !(current == nil && isNilable(s.condition.predicateType)) {
 		return nil, false, fmt.Errorf("step %q condition expects %s but previous output is %s", s.name, s.condition.predicateType, typeName(current))
