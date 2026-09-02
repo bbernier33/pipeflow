@@ -4,6 +4,7 @@ package obshttp
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -76,6 +77,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, queueDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Queues: snapshot.Queues})
 	case "/v1/resilience":
 		writeJSON(w, r, http.StatusOK, resilienceDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Recoveries: snapshot.Recoveries, Circuits: snapshot.Circuits, Idempotency: snapshot.Idempotency})
+	case "/v1/config":
+		writeJSON(w, r, http.StatusOK, configDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Pipelines: wireDefinitions(snapshot.Definitions)})
 	default:
 		writeError(w, r, http.StatusNotFound, "not_found")
 	}
@@ -173,6 +176,83 @@ type historyDocument struct {
 	Schema    string         `json:"schema"`
 	Snapshots []snapshotWire `json:"snapshots"`
 }
+type configDocument struct {
+	Schema     string           `json:"schema"`
+	CapturedAt time.Time        `json:"captured_at"`
+	Pipelines  []definitionWire `json:"pipelines"`
+}
+type definitionWire struct {
+	Name        string                 `json:"name"`
+	Description descriptionWire        `json:"description"`
+	Effective   *effectivePipelineWire `json:"effective_config,omitempty"`
+}
+type descriptionWire struct {
+	Kind     pipeflow.DescriptionKind `json:"kind"`
+	Name     string                   `json:"name,omitempty"`
+	Type     string                   `json:"type,omitempty"`
+	Role     pipeflow.StepRole        `json:"role,omitempty"`
+	Children []descriptionWire        `json:"children,omitempty"`
+}
+type effectiveValueWire[T any] struct {
+	Value  T                     `json:"value"`
+	Source pipeflow.ConfigSource `json:"source"`
+}
+type effectivePipelineWire struct {
+	Name        string                            `json:"name"`
+	Timeout     effectiveValueWire[time.Duration] `json:"timeout"`
+	Stages      []effectiveStageWire              `json:"stages"`
+	Backgrounds []effectiveBackgroundWire         `json:"backgrounds"`
+}
+type effectiveStageWire struct {
+	Name      string                            `json:"name"`
+	Timeout   effectiveValueWire[time.Duration] `json:"timeout"`
+	Steps     []effectiveStepWire               `json:"steps"`
+	Parallels []effectiveParallelWire           `json:"parallels"`
+	Subflows  []effectiveSubflowWire            `json:"subflows"`
+}
+type effectiveParallelWire struct {
+	Name          string                     `json:"name"`
+	FailurePolicy effectiveValueWire[string] `json:"failure_policy"`
+	Branches      []effectiveBranchWire      `json:"branches"`
+}
+type effectiveBranchWire struct {
+	Name  string              `json:"name"`
+	Steps []effectiveStepWire `json:"steps"`
+}
+type effectiveSubflowWire struct {
+	Name   string               `json:"name"`
+	Stages []effectiveStageWire `json:"stages"`
+}
+type effectiveBackgroundWire struct {
+	Name          string                     `json:"name"`
+	FailurePolicy effectiveValueWire[string] `json:"failure_policy"`
+}
+type retryWire struct {
+	MaxAttempts int           `json:"max_attempts"`
+	Delay       time.Duration `json:"delay_ns"`
+	Backoff     string        `json:"backoff"`
+	MaxDelay    time.Duration `json:"max_delay_ns"`
+	Jitter      float64       `json:"jitter"`
+}
+type pollingWire struct {
+	Every    time.Duration `json:"every_ns"`
+	MaxPolls int           `json:"max_polls"`
+	Timeout  time.Duration `json:"timeout_ns"`
+}
+type rateLimitWire struct {
+	Key           string        `json:"key,omitempty"`
+	MaxCalls      int           `json:"max_calls"`
+	Interval      time.Duration `json:"interval_ns"`
+	MaxConcurrent int           `json:"max_concurrent"`
+}
+type effectiveStepWire struct {
+	Name      string                                `json:"name"`
+	Role      effectiveValueWire[pipeflow.StepRole] `json:"role"`
+	Timeout   effectiveValueWire[time.Duration]     `json:"timeout"`
+	Retry     effectiveValueWire[retryWire]         `json:"retry"`
+	Polling   effectiveValueWire[pollingWire]       `json:"polling"`
+	RateLimit effectiveValueWire[rateLimitWire]     `json:"rate_limit"`
+}
 type snapshotWire struct {
 	Schema          string                 `json:"schema"`
 	CapturedAt      time.Time              `json:"captured_at"`
@@ -186,6 +266,7 @@ type snapshotWire struct {
 	Recoveries      []obs.RecoveryView     `json:"recoveries"`
 	Circuits        []obs.CircuitView      `json:"circuits"`
 	Idempotency     []obs.IdempotencyView  `json:"idempotency"`
+	Definitions     []definitionWire       `json:"definitions"`
 	Traces          []traceWire            `json:"traces"`
 	RecentMetrics   []metricWire           `json:"recent_metrics"`
 	RecentProfiles  []profileWire          `json:"recent_profiles"`
@@ -246,7 +327,7 @@ type profileWire struct {
 }
 
 func snapshotDocument(s obs.Snapshot) snapshotWire {
-	w := snapshotWire{Schema: SchemaVersion, CapturedAt: s.CapturedAt, Pipelines: s.Pipelines, Runs: s.Runs, Errors: s.Errors, Metrics: s.Metrics, Profiles: s.Profiles, Workers: s.Workers, Queues: s.Queues, Recoveries: s.Recoveries, Circuits: s.Circuits, Idempotency: s.Idempotency, DroppedTraces: s.DroppedTraces, DroppedMetrics: s.DroppedMetrics, DroppedProfiles: s.DroppedProfiles}
+	w := snapshotWire{Schema: SchemaVersion, CapturedAt: s.CapturedAt, Pipelines: s.Pipelines, Runs: s.Runs, Errors: s.Errors, Metrics: s.Metrics, Profiles: s.Profiles, Workers: s.Workers, Queues: s.Queues, Recoveries: s.Recoveries, Circuits: s.Circuits, Idempotency: s.Idempotency, Definitions: wireDefinitions(s.Definitions), DroppedTraces: s.DroppedTraces, DroppedMetrics: s.DroppedMetrics, DroppedProfiles: s.DroppedProfiles}
 	for _, v := range s.Traces {
 		e := (*errorWire)(nil)
 		if v.Error != nil {
@@ -261,6 +342,95 @@ func snapshotDocument(s obs.Snapshot) snapshotWire {
 		w.RecentProfiles = append(w.RecentProfiles, profileWire{Location: wireLocation(v.Location), Scope: v.Scope, Duration: v.Duration, Status: v.Status, OccurredAt: v.OccurredAt})
 	}
 	return w
+}
+
+func wireDefinitions(values []obs.DefinitionView) []definitionWire {
+	result := make([]definitionWire, 0, len(values))
+	for _, value := range values {
+		wire := definitionWire{Name: value.Name, Description: wireDescription(value.Description)}
+		if value.Effective != nil {
+			effective := wireEffective(*value.Effective)
+			wire.Effective = &effective
+		}
+		result = append(result, wire)
+	}
+	return result
+}
+func wireDescription(value pipeflow.Description) descriptionWire {
+	wire := descriptionWire{Kind: value.Kind, Name: value.Name, Type: value.Type, Role: value.Role}
+	for _, child := range value.Children {
+		wire.Children = append(wire.Children, wireDescription(child))
+	}
+	return wire
+}
+func wireEffective(value pipeflow.EffectivePipelineConfig) effectivePipelineWire {
+	wire := effectivePipelineWire{Name: value.Name, Timeout: effectiveValueWire[time.Duration]{Value: value.Timeout.Value, Source: value.Timeout.Source}}
+	for _, stage := range value.Stages {
+		wire.Stages = append(wire.Stages, wireStage(stage))
+	}
+	for _, background := range value.Backgrounds {
+		wire.Backgrounds = append(wire.Backgrounds, effectiveBackgroundWire{Name: background.Name, FailurePolicy: effectiveValueWire[string]{Value: backgroundPolicyName(background.FailurePolicy.Value), Source: background.FailurePolicy.Source}})
+	}
+	return wire
+}
+func wireStage(value pipeflow.EffectiveStageConfig) effectiveStageWire {
+	wire := effectiveStageWire{Name: value.Name, Timeout: effectiveValueWire[time.Duration]{Value: value.Timeout.Value, Source: value.Timeout.Source}}
+	for _, step := range value.Steps {
+		wire.Steps = append(wire.Steps, wireStep(step))
+	}
+	for _, parallel := range value.Parallels {
+		p := effectiveParallelWire{Name: parallel.Name, FailurePolicy: effectiveValueWire[string]{Value: failurePolicyName(parallel.FailurePolicy.Value), Source: parallel.FailurePolicy.Source}}
+		for _, branch := range parallel.Branches {
+			b := effectiveBranchWire{Name: branch.Name}
+			for _, step := range branch.Steps {
+				b.Steps = append(b.Steps, wireStep(step))
+			}
+			p.Branches = append(p.Branches, b)
+		}
+		wire.Parallels = append(wire.Parallels, p)
+	}
+	for _, subflow := range value.Subflows {
+		s := effectiveSubflowWire{Name: subflow.Name}
+		for _, stage := range subflow.Stages {
+			s.Stages = append(s.Stages, wireStage(stage))
+		}
+		wire.Subflows = append(wire.Subflows, s)
+	}
+	return wire
+}
+func wireStep(value pipeflow.EffectiveStepConfig) effectiveStepWire {
+	return effectiveStepWire{Name: value.Name, Role: effectiveValueWire[pipeflow.StepRole]{Value: value.Role.Value, Source: value.Role.Source}, Timeout: effectiveValueWire[time.Duration]{Value: value.Timeout.Value, Source: value.Timeout.Source}, Retry: effectiveValueWire[retryWire]{Value: retryWire{MaxAttempts: value.Retry.Value.MaxAttempts, Delay: value.Retry.Value.Delay, Backoff: backoffName(value.Retry.Value.Backoff), MaxDelay: value.Retry.Value.MaxDelay, Jitter: value.Retry.Value.Jitter}, Source: value.Retry.Source}, Polling: effectiveValueWire[pollingWire]{Value: pollingWire{Every: value.Polling.Value.Every, MaxPolls: value.Polling.Value.MaxPolls, Timeout: value.Polling.Value.Timeout}, Source: value.Polling.Source}, RateLimit: effectiveValueWire[rateLimitWire]{Value: rateLimitWire{Key: value.RateLimit.Value.Key, MaxCalls: value.RateLimit.Value.MaxCalls, Interval: value.RateLimit.Value.Interval, MaxConcurrent: value.RateLimit.Value.MaxConcurrent}, Source: value.RateLimit.Source}}
+}
+
+func failurePolicyName(value pipeflow.FailurePolicy) string {
+	switch value {
+	case pipeflow.WaitAll:
+		return "wait_all"
+	case pipeflow.FailFast:
+		return "fail_fast"
+	default:
+		return fmt.Sprintf("unknown_%d", value)
+	}
+}
+func backgroundPolicyName(value pipeflow.BackgroundFailurePolicy) string {
+	switch value {
+	case pipeflow.BackgroundFatal:
+		return "fatal"
+	case pipeflow.BackgroundNonFatal:
+		return "non_fatal"
+	default:
+		return fmt.Sprintf("unknown_%d", value)
+	}
+}
+func backoffName(value pipeflow.BackoffStrategy) string {
+	switch value {
+	case pipeflow.FixedBackoff:
+		return "fixed"
+	case pipeflow.ExponentialBackoff:
+		return "exponential"
+	default:
+		return fmt.Sprintf("unknown_%d", value)
+	}
 }
 func wireLocation(v pipeflow.ObservationLocation) locationWire {
 	return locationWire{RunID: v.RunID, Pipeline: v.Pipeline, Stage: v.Stage, Step: v.Step, Parallel: v.Parallel, Branch: v.Branch, Subflow: v.Subflow, Background: v.Background, Recovery: v.Recovery, Role: v.Role, Attempt: v.Attempt, Poll: v.Poll, RecoveryAttempt: v.RecoveryAttempt, RecoveryDecision: v.RecoveryDecision, Dependency: v.Dependency, Guard: v.Guard, CircuitState: v.CircuitState, IdempotencyOutcome: v.IdempotencyOutcome, Probe: v.Probe, ShortCircuited: v.ShortCircuited}

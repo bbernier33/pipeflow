@@ -206,3 +206,32 @@ func TestHistoryEndpointIsOptional(t *testing.T) {
 		t.Fatalf("status=%d", response.Code)
 	}
 }
+
+func TestConfigEndpointUsesTransportSchema(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{})
+	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("process", pipeflow.NewStep("load", func() error { return nil })))
+	config, err := pipeflow.ParseConfigYAML([]byte("pipelines:\n  orders:\n    timeout: 2s\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipeline, err = pipeline.WithConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collector.TrackPipeline(pipeline); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := obshttp.NewHandler(collector, obshttp.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/config", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d", response.Code)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, `"effective_config"`) || !strings.Contains(body, `"children"`) || strings.Contains(body, `"Children"`) {
+		t.Fatalf("body=%s", body)
+	}
+}

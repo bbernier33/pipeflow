@@ -229,3 +229,58 @@ func TestCollectorSnapshotIsDetached(t *testing.T) {
 		t.Fatalf("snapshot aliases collector: %+v", second)
 	}
 }
+
+func TestCollectorTracksDetachedPipelineDefinitionAndEffectiveConfig(t *testing.T) {
+	base := pipeflow.NewPipeline("orders", pipeflow.NewStage("process",
+		pipeflow.NewStep("load", func() error { return nil }),
+	))
+	config, err := pipeflow.ParseConfigYAML([]byte("pipelines:\n  orders:\n    timeout: 3s\n    stages:\n      process:\n        steps:\n          load:\n            timeout: 250ms\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured, err := base.WithConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector := obs.NewCollector(obs.Options{})
+	untrack, err := collector.TrackPipeline(configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := collector.Snapshot()
+	if len(snapshot.Definitions) != 1 || snapshot.Definitions[0].Description.Children[0].Children[0].Name != "load" {
+		t.Fatalf("definitions=%+v", snapshot.Definitions)
+	}
+	effective := snapshot.Definitions[0].Effective
+	if effective == nil || effective.Timeout.Value != 3*time.Second || effective.Timeout.Source != pipeflow.ConfigSourcePipeline || effective.Stages[0].Steps[0].Timeout.Value != 250*time.Millisecond {
+		t.Fatalf("effective=%+v", effective)
+	}
+	snapshot.Definitions[0].Description.Children[0].Children[0].Name = "mutated"
+	snapshot.Definitions[0].Effective.Stages[0].Steps[0].Name = "mutated"
+	again := collector.Snapshot().Definitions[0]
+	if again.Description.Children[0].Children[0].Name != "load" || again.Effective.Stages[0].Steps[0].Name != "load" {
+		t.Fatal("definition snapshot was not detached")
+	}
+
+	if _, err := collector.TrackPipeline(configured); err == nil {
+		t.Fatal("expected duplicate registration error")
+	}
+	untrack()
+	untrack()
+	if len(collector.Snapshot().Definitions) != 0 {
+		t.Fatal("definition remained after untrack")
+	}
+}
+
+func TestCollectorTracksUnconfiguredTopologyWithoutEffectiveConfig(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{})
+	pipeline := pipeflow.NewPipeline("plain", pipeflow.NewStage("stage", pipeflow.NewStep("step", func() error { return nil })))
+	if _, err := collector.TrackPipeline(pipeline); err != nil {
+		t.Fatal(err)
+	}
+	definition := collector.Snapshot().Definitions[0]
+	if definition.Name != "plain" || definition.Effective != nil {
+		t.Fatalf("definition=%+v", definition)
+	}
+}

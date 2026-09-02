@@ -195,6 +195,24 @@ short-circuits; `Snapshot().Idempotency` summarizes executions, duplicates,
 releasable failures, and store failures. Stable keys and business values are
 never emitted.
 
+Pipeline topology and resolved execution policy can be registered explicitly:
+
+```go
+untrackPipeline, err := collector.TrackPipeline(configuredPipeline)
+if err != nil {
+    log.Fatal(err)
+}
+defer untrackPipeline()
+
+definition := collector.Snapshot().Definitions[0]
+```
+
+Each definition contains the callback-free `Describe()` tree. Pipelines built
+with `WithConfig` also contain their detached `EffectiveConfig()` values and
+winning configuration sources; unconfigured Pipelines expose topology with a
+nil effective configuration. This surface is observation-only and cannot
+change an active Pipeline.
+
 Operational history is opt-in and recorded outside execution:
 
 ```go
@@ -241,7 +259,7 @@ mux.Handle("/operations/", http.StripPrefix("/operations", handler))
 ```
 
 The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
-`/v1/queues`, `/v1/resilience`, optional `/v1/history`, and `/v1/snapshot`.
+`/v1/queues`, `/v1/resilience`, `/v1/config`, optional `/v1/history`, and `/v1/snapshot`.
 History accepts RFC3339 `from`/`to`, `limit` (maximum 1000), and `order=asc|desc`.
 Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
@@ -251,6 +269,7 @@ TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationT
 [Queue and Worker Operational Views](adr/QueueWorkerOperationalViews.md), and
 [Resilience Operational Views](adr/ResilienceOperationalViews.md), and
 [Persistent Observation History](adr/PersistentObservationHistory.md), and
+[Effective Configuration View](adr/EffectiveConfigurationView.md), and
 [Observation HTTP Transport](adr/ObservationHTTPTransport.md).
 
 ## Design Goals

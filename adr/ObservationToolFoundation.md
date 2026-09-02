@@ -35,6 +35,6 @@ time-window policies belong to a later derived-analysis slice.
 ## Deferred
 
 HTTP/WebSocket/TCP transport, authentication, persistent history, runtime
-resource sampling, queue/worker adapters, resilience-specific views, effective
-configuration, explain analysis, TUI, multi-process discovery, Prometheus, and
+resource sampling, provider-specific queue adapters, explain analysis, TUI,
+multi-process discovery, Prometheus, and
 OpenTelemetry exporters are not included here.

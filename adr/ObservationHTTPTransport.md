@@ -13,6 +13,7 @@ The transport exposes:
 - `GET` and `HEAD /v1/workers` for tracked Worker runtime state;
 - `GET` and `HEAD /v1/queues` for tracked Worker queue state;
 - `GET` and `HEAD /v1/resilience` for Recovery, Circuit, and Idempotency views;
+- `GET` and `HEAD /v1/config` for registered topology and effective settings;
 - optional `GET` and `HEAD /v1/history` for bounded persistent snapshots;
 - `GET` and `HEAD /v1/snapshot` for the complete bounded snapshot.
 

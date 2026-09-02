@@ -39,3 +39,16 @@ func ExampleCollector_TrackWorker() {
 	// primary 2
 	// 10
 }
+
+func ExampleCollector_TrackPipeline() {
+	collector := obs.NewCollector(obs.Options{})
+	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("process",
+		pipeflow.NewStep("load", func() error { return nil }),
+	))
+	untrack, _ := collector.TrackPipeline(pipeline)
+	defer untrack()
+
+	definition := collector.Snapshot().Definitions[0]
+	fmt.Println(definition.Name, definition.Description.Children[0].Name, definition.Effective == nil)
+	// Output: orders process true
+}

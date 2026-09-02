@@ -166,6 +166,13 @@ type IdempotencyView struct {
 	LastSeen            time.Time `json:"last_seen"`
 }
 
+// DefinitionView is immutable Pipeline topology and optional resolved config.
+type DefinitionView struct {
+	Name        string
+	Description pipeflow.Description
+	Effective   *pipeflow.EffectivePipelineConfig
+}
+
 type Snapshot struct {
 	CapturedAt                                     time.Time
 	Pipelines                                      []PipelineView
@@ -178,6 +185,7 @@ type Snapshot struct {
 	Recoveries                                     []RecoveryView
 	Circuits                                       []CircuitView
 	Idempotency                                    []IdempotencyView
+	Definitions                                    []DefinitionView
 	Traces                                         []pipeflow.TraceEvent
 	RecentMetrics                                  []pipeflow.MetricSample
 	RecentProfiles                                 []pipeflow.ProfileSample
@@ -205,6 +213,7 @@ type pipelineState struct{ view PipelineView }
 type trackedWorker struct {
 	worker *pipeflow.Worker
 }
+type trackedDefinition struct{ view DefinitionView }
 
 // Collector is a concurrency-safe in-process telemetry consumer.
 type Collector struct {
@@ -224,10 +233,41 @@ type Collector struct {
 	recoveries                                     map[string]RecoveryView
 	circuits                                       map[string]CircuitView
 	idempotency                                    map[string]IdempotencyView
+	definitions                                    map[string]*trackedDefinition
 }
 
 func NewCollector(options Options) *Collector {
-	return &Collector{options: options.normalized(), runs: make(map[runKey]RunView), pipelines: make(map[string]*pipelineState), metricAggregates: make(map[metricKey]MetricAggregate), profileAggregates: make(map[profileKey]ProfileAggregate), errors: make(map[errorKey]ErrorGroup), workers: make(map[string]*trackedWorker), recoveries: make(map[string]RecoveryView), circuits: make(map[string]CircuitView), idempotency: make(map[string]IdempotencyView)}
+	return &Collector{options: options.normalized(), runs: make(map[runKey]RunView), pipelines: make(map[string]*pipelineState), metricAggregates: make(map[metricKey]MetricAggregate), profileAggregates: make(map[profileKey]ProfileAggregate), errors: make(map[errorKey]ErrorGroup), workers: make(map[string]*trackedWorker), recoveries: make(map[string]RecoveryView), circuits: make(map[string]CircuitView), idempotency: make(map[string]IdempotencyView), definitions: make(map[string]*trackedDefinition)}
+}
+
+// TrackPipeline adds immutable topology and effective configuration to future
+// snapshots. It never observes or controls executions.
+func (c *Collector) TrackPipeline(pipeline pipeflow.Pipeline) (func(), error) {
+	if c == nil {
+		return nil, errors.New("pipeflow obs: nil Collector")
+	}
+	if err := pipeline.Validate(); err != nil {
+		return nil, fmt.Errorf("pipeflow obs: track Pipeline: %w", err)
+	}
+	description := pipeline.Describe()
+	view := DefinitionView{Name: description.Name, Description: description}
+	if effective, ok := pipeline.EffectiveConfig(); ok {
+		view.Effective = &effective
+	}
+	registration := &trackedDefinition{view: view}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.definitions[view.Name]; exists {
+		return nil, fmt.Errorf("pipeflow obs: Pipeline %q is already tracked", view.Name)
+	}
+	c.definitions[view.Name] = registration
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.definitions[view.Name] == registration {
+			delete(c.definitions, view.Name)
+		}
+	}, nil
 }
 
 // TrackWorker adds a named Core Worker to future operational snapshots. The
@@ -488,6 +528,9 @@ func (c *Collector) Snapshot() Snapshot {
 	for _, view := range c.idempotency {
 		result.Idempotency = append(result.Idempotency, view)
 	}
+	for _, registration := range c.definitions {
+		result.Definitions = append(result.Definitions, cloneDefinition(registration.view))
+	}
 	sortSnapshot(&result)
 	return result
 }
@@ -534,4 +577,50 @@ func sortSnapshot(s *Snapshot) {
 	sort.Slice(s.Recoveries, func(i, j int) bool { return s.Recoveries[i].Name < s.Recoveries[j].Name })
 	sort.Slice(s.Circuits, func(i, j int) bool { return s.Circuits[i].Dependency < s.Circuits[j].Dependency })
 	sort.Slice(s.Idempotency, func(i, j int) bool { return s.Idempotency[i].Guard < s.Idempotency[j].Guard })
+	sort.Slice(s.Definitions, func(i, j int) bool { return s.Definitions[i].Name < s.Definitions[j].Name })
+}
+
+func cloneDefinition(view DefinitionView) DefinitionView {
+	view.Description = cloneDescription(view.Description)
+	if view.Effective != nil {
+		copy := cloneEffective(*view.Effective)
+		view.Effective = &copy
+	}
+	return view
+}
+
+func cloneEffective(value pipeflow.EffectivePipelineConfig) pipeflow.EffectivePipelineConfig {
+	value.Stages = append([]pipeflow.EffectiveStageConfig(nil), value.Stages...)
+	for i := range value.Stages {
+		value.Stages[i] = cloneEffectiveStage(value.Stages[i])
+	}
+	value.Backgrounds = append([]pipeflow.EffectiveBackgroundConfig(nil), value.Backgrounds...)
+	return value
+}
+
+func cloneEffectiveStage(value pipeflow.EffectiveStageConfig) pipeflow.EffectiveStageConfig {
+	value.Steps = append([]pipeflow.EffectiveStepConfig(nil), value.Steps...)
+	value.Parallels = append([]pipeflow.EffectiveParallelConfig(nil), value.Parallels...)
+	for i := range value.Parallels {
+		value.Parallels[i].Branches = append([]pipeflow.EffectiveBranchConfig(nil), value.Parallels[i].Branches...)
+		for j := range value.Parallels[i].Branches {
+			value.Parallels[i].Branches[j].Steps = append([]pipeflow.EffectiveStepConfig(nil), value.Parallels[i].Branches[j].Steps...)
+		}
+	}
+	value.Subflows = append([]pipeflow.EffectiveSubflowConfig(nil), value.Subflows...)
+	for i := range value.Subflows {
+		value.Subflows[i].Stages = append([]pipeflow.EffectiveStageConfig(nil), value.Subflows[i].Stages...)
+		for j := range value.Subflows[i].Stages {
+			value.Subflows[i].Stages[j] = cloneEffectiveStage(value.Subflows[i].Stages[j])
+		}
+	}
+	return value
+}
+
+func cloneDescription(value pipeflow.Description) pipeflow.Description {
+	value.Children = append([]pipeflow.Description(nil), value.Children...)
+	for i := range value.Children {
+		value.Children[i] = cloneDescription(value.Children[i])
+	}
+	return value
 }
