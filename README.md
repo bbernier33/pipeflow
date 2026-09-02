@@ -119,6 +119,29 @@ mean that a dependency is unhealthy. `provider.Snapshot()` exposes read-only
 live state, and each protected Step records a payload-free circuit report. See
 [Circuit Breaker](adr/CircuitBreaker.md).
 
+### Idempotency Guard
+
+Idempotency Guard prevents a completed side effect from being repeated when
+the application supplies a stable key and an atomic store:
+
+```go
+guard, err := pipeflow.NewIdempotencyGuard(
+    "payments",
+    paymentStore,
+    func(payment Payment) string { return payment.ID },
+)
+
+charge := pipeflow.NewStep("charge", func(payment Payment) error {
+    return gateway.Charge(payment)
+}).WithIdempotencyGuard(guard)
+```
+
+Guarded Steps must be pass-through functions. A duplicate-completed execution
+is skipped and its input continues flowing. One claim surrounds retries and
+Recovery. The built-in memory store is process-local; durable or distributed
+guarantees come from application-provided stores. Pipeflow does not promise
+exactly-once execution. See [Idempotency Guard](adr/IdempotencyGuard.md).
+
 ## Design Goals
 
 Pipeflow should be:

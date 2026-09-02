@@ -26,6 +26,9 @@ var (
 	_ func(string, pipeflow.CircuitBreakerPolicy) (*pipeflow.CircuitBreaker, error)         = pipeflow.NewCircuitBreaker
 	_ func(*pipeflow.Step, *pipeflow.CircuitBreaker) *pipeflow.Step                         = (*pipeflow.Step).WithCircuitBreaker
 	_ func(*pipeflow.CircuitBreaker) pipeflow.CircuitSnapshot                               = (*pipeflow.CircuitBreaker).Snapshot
+	_ func(string, pipeflow.IdempotencyStore, any) (*pipeflow.IdempotencyGuard, error)      = pipeflow.NewIdempotencyGuard
+	_ func(*pipeflow.Step, *pipeflow.IdempotencyGuard) *pipeflow.Step                       = (*pipeflow.Step).WithIdempotencyGuard
+	_ func() pipeflow.IdempotencyStore                                                      = pipeflow.NewMemoryIdempotencyStore
 
 	_ func(*pipeflow.Pipeline, context.Context, ...any) (any, error)                                         = (*pipeflow.Pipeline).Run
 	_ func(*pipeflow.Pipeline, context.Context, ...any) (any, pipeflow.RunReport, error)                     = (*pipeflow.Pipeline).RunWithReport

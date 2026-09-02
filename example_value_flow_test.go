@@ -85,6 +85,22 @@ func ExampleCircuitBreaker() {
 	// Output: closed
 }
 
+func ExampleIdempotencyGuard() {
+	type payment struct{ ID string }
+	store := pipeflow.NewMemoryIdempotencyStore()
+	guard, _ := pipeflow.NewIdempotencyGuard("payments", store, func(value payment) string {
+		return value.ID
+	})
+	charge := pipeflow.NewStep("charge", func(value payment) error {
+		fmt.Println("charged", value.ID)
+		return nil
+	}).WithIdempotencyGuard(guard)
+	pipeline := pipeflow.NewPipeline("payments", pipeflow.NewStage("charge", charge))
+	_, _ = pipeline.Run(context.Background(), payment{ID: "pay-123"})
+	_, _ = pipeline.Run(context.Background(), payment{ID: "pay-123"})
+	// Output: charged pay-123
+}
+
 func ExamplePipeline_ValidateInput() {
 	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("process",
 		pipeflow.NewStep("validate", func(orderID int) error { return nil }),

@@ -42,6 +42,7 @@ type Step struct {
 	recovery       *RecoveryStage
 	recoveryPolicy RecoveryPolicy
 	circuit        *CircuitBreaker
+	idempotency    *IdempotencyGuard
 }
 
 // NewStep creates a Step from a supported ordinary Go function and options.
@@ -128,6 +129,61 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		return nil, annotateExecutionError(fmt.Errorf("input: %w", err), "", "", s.name, 0)
 	}
 	ctx.Logger().Info("Running step: " + s.name)
+	if s.idempotency != nil {
+		key, keyErr := s.idempotency.key.extract(input)
+		if keyErr != nil {
+			return nil, annotateExecutionError(keyErr, "", "", s.name, 0)
+		}
+		claim, claimErr := s.idempotency.store.Claim(goCtx, s.idempotency.storageKey(key))
+		if claimErr != nil {
+			return nil, annotateExecutionError(claimErr, "", "", s.name, 0)
+		}
+		switch claim {
+		case IdempotencyCompleted:
+			if recorder != nil {
+				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Outcome: IdempotencyDuplicateCompleted})
+				recorder.skipStep(reportPath)
+			}
+			if recorder != nil {
+				if hookErr := lifecycle.emitStep(StepSkipped, stageName, parallelName, branchName, s.name, s.Role(), StatusSkipped, nil); hookErr != nil {
+					return nil, annotateExecutionError(hookErr, "", "", s.name, 0)
+				}
+			}
+			skipped = true
+			return input, nil
+		case IdempotencyInProgress:
+			if recorder != nil {
+				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Outcome: IdempotencyDuplicateInProgress})
+			}
+			return nil, annotateExecutionError(&IdempotencyInProgressError{Guard: s.idempotency.name}, "", "", s.name, 0)
+		case IdempotencyClaimed:
+			if recorder != nil {
+				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Claim: IdempotencyClaimed})
+			}
+		default:
+			return nil, annotateExecutionError(fmt.Errorf("pipeflow: idempotency guard %q store returned invalid claim state %q", s.idempotency.name, claim), "", "", s.name, 0)
+		}
+		defer func() {
+			outcome := IdempotencyExecuted
+			var storeErr error
+			if err == nil {
+				storeErr = s.idempotency.store.Complete(goCtx, s.idempotency.storageKey(key))
+			} else {
+				outcome = IdempotencyFailedReleasable
+				storeErr = s.idempotency.store.Release(context.WithoutCancel(goCtx), s.idempotency.storageKey(key))
+			}
+			if storeErr != nil {
+				outcome = IdempotencyStoreFailure
+			}
+			if recorder != nil {
+				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Claim: IdempotencyClaimed, Outcome: outcome, Error: storeErr})
+			}
+			if storeErr != nil {
+				output = nil
+				err = errors.Join(err, annotateExecutionError(storeErr, "", "", s.name, 0))
+			}
+		}()
+	}
 	var permit circuitPermit
 	if s.circuit != nil {
 		var circuitErr error
@@ -267,6 +323,14 @@ func (s *Step) validateFlow(current reflect.Type, known bool) (reflect.Type, boo
 	if s.recovery != nil {
 		if err := s.recovery.validate(); err != nil {
 			return nil, false, err
+		}
+	}
+	if s.idempotency != nil {
+		if s.flow != flowPreserve {
+			return nil, false, fmt.Errorf("step %q idempotency guard requires a pass-through function", s.name)
+		}
+		if s.idempotency.key.inputType != nil && known && (current == nil || !current.AssignableTo(s.idempotency.key.inputType)) && !(current == nil && isNilable(s.idempotency.key.inputType)) {
+			return nil, false, fmt.Errorf("step %q idempotency key expects %s but previous output is %s", s.name, s.idempotency.key.inputType, typeName(current))
 		}
 	}
 	if s.condition != nil && s.condition.predicateType != nil && known && (current == nil || !current.AssignableTo(s.condition.predicateType)) && !(current == nil && isNilable(s.condition.predicateType)) {

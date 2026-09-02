@@ -88,18 +88,26 @@ type BranchReport struct {
 }
 
 type StepReport struct {
-	Name       string
-	Role       StepRole
-	Status     Status
-	StartedAt  time.Time
-	EndedAt    time.Time
-	Duration   time.Duration
-	Attempts   []AttemptReport
-	Polls      []PollReport
-	Error      error
-	Metadata   ResultMetadata
-	Recoveries []RecoveryReport
-	Circuit    *CircuitReport
+	Name        string
+	Role        StepRole
+	Status      Status
+	StartedAt   time.Time
+	EndedAt     time.Time
+	Duration    time.Duration
+	Attempts    []AttemptReport
+	Polls       []PollReport
+	Error       error
+	Metadata    ResultMetadata
+	Recoveries  []RecoveryReport
+	Circuit     *CircuitReport
+	Idempotency *IdempotencyReport
+}
+
+type IdempotencyReport struct {
+	Guard   string
+	Claim   IdempotencyClaimState
+	Outcome IdempotencyOutcome
+	Error   error
 }
 
 type CircuitReport struct {
@@ -486,6 +494,12 @@ func (r *runRecorder) setCircuit(path stepReportPath, circuit CircuitReport) {
 	r.stepReport(path).Circuit = &circuit
 }
 
+func (r *runRecorder) setIdempotency(path stepReportPath, report IdempotencyReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stepReport(path).Idempotency = &report
+}
+
 func (r *runRecorder) startPoll(path stepReportPath, poll int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -648,6 +662,10 @@ func cloneStepReport(step StepReport) StepReport {
 	if step.Circuit != nil {
 		circuit := *step.Circuit
 		result.Circuit = &circuit
+	}
+	if step.Idempotency != nil {
+		report := *step.Idempotency
+		result.Idempotency = &report
 	}
 	result.Polls = make([]PollReport, len(step.Polls))
 	for i, poll := range step.Polls {
