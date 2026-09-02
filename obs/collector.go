@@ -1,6 +1,7 @@
 package obs
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -104,6 +105,31 @@ type ProfileAggregate struct {
 	Maximum  time.Duration             `json:"maximum_ns"`
 }
 
+// WorkerView is a read-only operational view of a tracked Core Worker.
+type WorkerView struct {
+	Name        string          `json:"name"`
+	Pipeline    string          `json:"pipeline"`
+	Status      pipeflow.Status `json:"status"`
+	Concurrency int             `json:"concurrency"`
+	Active      int             `json:"active"`
+	InFlight    int             `json:"in_flight"`
+	Submitted   uint64          `json:"submitted"`
+	Completed   uint64          `json:"completed"`
+	Failed      uint64          `json:"failed"`
+}
+
+// QueueView is the payload-free queue portion of a tracked Worker runtime.
+type QueueView struct {
+	Name        string  `json:"name"`
+	Worker      string  `json:"worker"`
+	Pipeline    string  `json:"pipeline"`
+	Depth       int     `json:"depth"`
+	Capacity    int     `json:"capacity"`
+	MaxInFlight int     `json:"max_in_flight"`
+	InFlight    int     `json:"in_flight"`
+	Utilization float64 `json:"utilization"`
+}
+
 type Snapshot struct {
 	CapturedAt                                     time.Time
 	Pipelines                                      []PipelineView
@@ -111,6 +137,8 @@ type Snapshot struct {
 	Errors                                         []ErrorGroup
 	Metrics                                        []MetricAggregate
 	Profiles                                       []ProfileAggregate
+	Workers                                        []WorkerView
+	Queues                                         []QueueView
 	Traces                                         []pipeflow.TraceEvent
 	RecentMetrics                                  []pipeflow.MetricSample
 	RecentProfiles                                 []pipeflow.ProfileSample
@@ -135,6 +163,9 @@ type errorKey struct {
 }
 
 type pipelineState struct{ view PipelineView }
+type trackedWorker struct {
+	worker *pipeflow.Worker
+}
 
 // Collector is a concurrency-safe in-process telemetry consumer.
 type Collector struct {
@@ -150,10 +181,40 @@ type Collector struct {
 	metricAggregates                               map[metricKey]MetricAggregate
 	profileAggregates                              map[profileKey]ProfileAggregate
 	errors                                         map[errorKey]ErrorGroup
+	workers                                        map[string]*trackedWorker
 }
 
 func NewCollector(options Options) *Collector {
-	return &Collector{options: options.normalized(), runs: make(map[runKey]RunView), pipelines: make(map[string]*pipelineState), metricAggregates: make(map[metricKey]MetricAggregate), profileAggregates: make(map[profileKey]ProfileAggregate), errors: make(map[errorKey]ErrorGroup)}
+	return &Collector{options: options.normalized(), runs: make(map[runKey]RunView), pipelines: make(map[string]*pipelineState), metricAggregates: make(map[metricKey]MetricAggregate), profileAggregates: make(map[profileKey]ProfileAggregate), errors: make(map[errorKey]ErrorGroup), workers: make(map[string]*trackedWorker)}
+}
+
+// TrackWorker adds a named Core Worker to future operational snapshots. The
+// returned function removes exactly this registration and is safe to call more
+// than once.
+func (c *Collector) TrackWorker(name string, worker *pipeflow.Worker) (func(), error) {
+	if c == nil {
+		return nil, errors.New("pipeflow obs: nil Collector")
+	}
+	if name == "" {
+		return nil, errors.New("pipeflow obs: Worker name cannot be empty")
+	}
+	if worker == nil {
+		return nil, errors.New("pipeflow obs: nil Worker")
+	}
+	registration := &trackedWorker{worker: worker}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.workers[name]; exists {
+		return nil, fmt.Errorf("pipeflow obs: Worker %q is already tracked", name)
+	}
+	c.workers[name] = registration
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.workers[name] == registration {
+			delete(c.workers, name)
+		}
+	}, nil
 }
 
 func (c *Collector) ObserveTrace(event pipeflow.TraceEvent) {
@@ -306,6 +367,15 @@ func (c *Collector) Snapshot() Snapshot {
 	for _, aggregate := range c.profileAggregates {
 		result.Profiles = append(result.Profiles, aggregate)
 	}
+	for name, registration := range c.workers {
+		state := registration.worker.State()
+		result.Workers = append(result.Workers, WorkerView{Name: name, Pipeline: state.Pipeline, Status: state.Status, Concurrency: state.Workers, Active: state.Active, InFlight: state.InFlight, Submitted: state.Submitted, Completed: state.Completed, Failed: state.Failed})
+		utilization := 0.0
+		if state.BufferCapacity > 0 {
+			utilization = float64(state.QueueDepth) / float64(state.BufferCapacity)
+		}
+		result.Queues = append(result.Queues, QueueView{Name: name + ".queue", Worker: name, Pipeline: state.Pipeline, Depth: state.QueueDepth, Capacity: state.BufferCapacity, MaxInFlight: state.MaxInFlight, InFlight: state.InFlight, Utilization: utilization})
+	}
 	sortSnapshot(&result)
 	return result
 }
@@ -347,4 +417,6 @@ func sortSnapshot(s *Snapshot) {
 		return a.Name < b.Name
 	})
 	sort.Slice(s.Profiles, func(i, j int) bool { return s.Profiles[i].Total > s.Profiles[j].Total })
+	sort.Slice(s.Workers, func(i, j int) bool { return s.Workers[i].Name < s.Workers[j].Name })
+	sort.Slice(s.Queues, func(i, j int) bool { return s.Queues[i].Name < s.Queues[j].Name })
 }

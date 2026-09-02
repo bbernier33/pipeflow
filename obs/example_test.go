@@ -19,3 +19,23 @@ func ExampleCollector() {
 	fmt.Println(snapshot.Pipelines[0].Name, snapshot.Pipelines[0].Health.Health)
 	// Output: orders healthy
 }
+
+func ExampleCollector_TrackWorker() {
+	collector := obs.NewCollector(obs.Options{})
+	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("process",
+		pipeflow.NewStep("accept", func(value int) error { return nil }),
+	))
+	worker, _ := pipeline.StartWorker(context.Background(), pipeflow.WorkerOptions{Workers: 2, Buffer: 10})
+	untrack, _ := collector.TrackWorker("primary", worker)
+
+	snapshot := collector.Snapshot()
+	fmt.Println(snapshot.Workers[0].Name, snapshot.Workers[0].Concurrency)
+	fmt.Println(snapshot.Queues[0].Capacity)
+
+	untrack()
+	worker.Close()
+	_ = worker.Wait()
+	// Output:
+	// primary 2
+	// 10
+}

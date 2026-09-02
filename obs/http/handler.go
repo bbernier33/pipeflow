@@ -56,6 +56,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, snapshotDocument(snapshot))
 	case "/v1/health":
 		writeJSON(w, r, http.StatusOK, healthDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Pipelines: snapshot.Pipelines})
+	case "/v1/workers":
+		writeJSON(w, r, http.StatusOK, workerDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Workers: snapshot.Workers})
+	case "/v1/queues":
+		writeJSON(w, r, http.StatusOK, queueDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Queues: snapshot.Queues})
 	default:
 		writeError(w, r, http.StatusNotFound, "not_found")
 	}
@@ -76,6 +80,16 @@ type healthDocument struct {
 	CapturedAt time.Time          `json:"captured_at"`
 	Pipelines  []obs.PipelineView `json:"pipelines"`
 }
+type workerDocument struct {
+	Schema     string           `json:"schema"`
+	CapturedAt time.Time        `json:"captured_at"`
+	Workers    []obs.WorkerView `json:"workers"`
+}
+type queueDocument struct {
+	Schema     string          `json:"schema"`
+	CapturedAt time.Time       `json:"captured_at"`
+	Queues     []obs.QueueView `json:"queues"`
+}
 type snapshotWire struct {
 	Schema          string                 `json:"schema"`
 	CapturedAt      time.Time              `json:"captured_at"`
@@ -84,6 +98,8 @@ type snapshotWire struct {
 	Errors          []obs.ErrorGroup       `json:"errors"`
 	Metrics         []obs.MetricAggregate  `json:"metrics"`
 	Profiles        []obs.ProfileAggregate `json:"profiles"`
+	Workers         []obs.WorkerView       `json:"workers"`
+	Queues          []obs.QueueView        `json:"queues"`
 	Traces          []traceWire            `json:"traces"`
 	RecentMetrics   []metricWire           `json:"recent_metrics"`
 	RecentProfiles  []profileWire          `json:"recent_profiles"`
@@ -137,7 +153,7 @@ type profileWire struct {
 }
 
 func snapshotDocument(s obs.Snapshot) snapshotWire {
-	w := snapshotWire{Schema: SchemaVersion, CapturedAt: s.CapturedAt, Pipelines: s.Pipelines, Runs: s.Runs, Errors: s.Errors, Metrics: s.Metrics, Profiles: s.Profiles, DroppedTraces: s.DroppedTraces, DroppedMetrics: s.DroppedMetrics, DroppedProfiles: s.DroppedProfiles}
+	w := snapshotWire{Schema: SchemaVersion, CapturedAt: s.CapturedAt, Pipelines: s.Pipelines, Runs: s.Runs, Errors: s.Errors, Metrics: s.Metrics, Profiles: s.Profiles, Workers: s.Workers, Queues: s.Queues, DroppedTraces: s.DroppedTraces, DroppedMetrics: s.DroppedMetrics, DroppedProfiles: s.DroppedProfiles}
 	for _, v := range s.Traces {
 		e := (*errorWire)(nil)
 		if v.Error != nil {

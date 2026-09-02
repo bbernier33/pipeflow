@@ -97,6 +97,73 @@ func TestCollectorSupportsConcurrentApplicationsAndSnapshots(t *testing.T) {
 	}
 }
 
+func TestCollectorTracksWorkerAndQueueState(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	pipeline := pipeflow.NewPipeline("jobs", pipeflow.NewStage("work",
+		pipeflow.NewStep("block", func(value int) error {
+			if value == 1 {
+				close(started)
+				<-release
+			}
+			return nil
+		}),
+	))
+	worker, err := pipeline.StartWorker(context.Background(), pipeflow.WorkerOptions{Workers: 1, Buffer: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector := obs.NewCollector(obs.Options{})
+	untrack, err := collector.TrackWorker("primary", worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := worker.Submit(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	second, err := worker.Submit(context.Background(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := collector.Snapshot()
+	if len(snapshot.Workers) != 1 || snapshot.Workers[0].Name != "primary" || snapshot.Workers[0].Active != 1 || snapshot.Workers[0].InFlight != 2 {
+		t.Fatalf("workers=%+v", snapshot.Workers)
+	}
+	if len(snapshot.Queues) != 1 || snapshot.Queues[0].Depth != 1 || snapshot.Queues[0].Capacity != 2 || snapshot.Queues[0].Utilization != 0.5 {
+		t.Fatalf("queues=%+v", snapshot.Queues)
+	}
+
+	close(release)
+	worker.Close()
+	if _, _, err := first.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := second.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	untrack()
+	untrack()
+	if snapshot := collector.Snapshot(); len(snapshot.Workers) != 0 || len(snapshot.Queues) != 0 {
+		t.Fatalf("untracked snapshot=%+v", snapshot)
+	}
+}
+
+func TestTrackWorkerValidatesRegistration(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{})
+	if _, err := collector.TrackWorker("", nil); err == nil {
+		t.Fatal("expected empty name error")
+	}
+	if _, err := collector.TrackWorker("worker", nil); err == nil {
+		t.Fatal("expected nil Worker error")
+	}
+}
+
 func TestCollectorSnapshotIsDetached(t *testing.T) {
 	collector := obs.NewCollector(obs.Options{})
 	collector.ObserveTrace(pipeflow.TraceEvent{Scope: pipeflow.ObservationPipeline, Phase: pipeflow.ObservationStarted, Location: pipeflow.ObservationLocation{RunID: "r", Pipeline: "p"}, Status: pipeflow.StatusRunning, OccurredAt: time.Now()})

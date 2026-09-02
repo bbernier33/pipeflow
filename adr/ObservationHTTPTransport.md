@@ -10,6 +10,8 @@ The transport exposes:
 
 - `GET` and `HEAD /healthz` for handler liveness;
 - `GET` and `HEAD /v1/health` for derived Pipeline health;
+- `GET` and `HEAD /v1/workers` for tracked Worker runtime state;
+- `GET` and `HEAD /v1/queues` for tracked Worker queue state;
 - `GET` and `HEAD /v1/snapshot` for the complete bounded snapshot.
 
 Every document carries schema `pipeflow.obs.http/v1`. Transport-owned wire

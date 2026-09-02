@@ -157,6 +157,28 @@ pipeline = pipeline.WithObserver(collector)
 snapshot := collector.Snapshot()
 ```
 
+Long-lived Core workers can be added explicitly to the same read-only view:
+
+```go
+worker, err := pipeline.StartWorker(ctx, pipeflow.WorkerOptions{
+    Workers: 4,
+    Buffer:  100,
+})
+if err != nil {
+    log.Fatal(err)
+}
+untrack, err := collector.TrackWorker("orders-primary", worker)
+if err != nil {
+    log.Fatal(err)
+}
+defer untrack()
+```
+
+`Snapshot().Workers` reports status, concurrency, active/in-flight work, and
+outcome counters. `Snapshot().Queues` reports depth, capacity, utilization,
+and max-in-flight state. These views contain no queued values and provide no
+control over the Worker.
+
 The initial in-process collector provides bounded recent telemetry, run and
 pipeline views, explainable basic health, structurally grouped error classes,
 metric aggregates, and profile totals. Snapshots are detached and read-only;
@@ -179,13 +201,14 @@ if err != nil {
 mux.Handle("/operations/", http.StripPrefix("/operations", handler))
 ```
 
-The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, and
-`/v1/snapshot`. Responses are versioned, payload-free JSON with caching
+The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
+`/v1/queues`, and `/v1/snapshot`. Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
 address, server lifecycle, and request logging. Persistent history,
 resilience-specific views, runtime resources, exporters, streaming, and the
-TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md)
-and [Observation HTTP Transport](adr/ObservationHTTPTransport.md).
+TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
+[Queue and Worker Operational Views](adr/QueueWorkerOperationalViews.md), and
+[Observation HTTP Transport](adr/ObservationHTTPTransport.md).
 
 ## Design Goals
 
