@@ -162,9 +162,30 @@ pipeline views, explainable basic health, structurally grouped error classes,
 metric aggregates, and profile totals. Snapshots are detached and read-only;
 the collector never receives business payloads or error messages.
 
-Network transports, persistent history, resilience-specific views, runtime
-resources, exporters, and the TUI remain later v2.x slices. See
-[Observation Tool Foundation](adr/ObservationToolFoundation.md).
+An optional standard-library HTTP transport exposes those snapshots without
+giving the transport control over execution:
+
+```go
+handler, err := obshttp.NewHandler(collector, obshttp.Options{
+    Authorize: func(r *http.Request) bool {
+        return r.Header.Get("Authorization") == "Bearer "+token
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+// Mount handler in the application's existing HTTP server.
+mux.Handle("/operations/", http.StripPrefix("/operations", handler))
+```
+
+The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, and
+`/v1/snapshot`. Responses are versioned, payload-free JSON with caching
+disabled. The embedding application owns authentication policy, TLS, bind
+address, server lifecycle, and request logging. Persistent history,
+resilience-specific views, runtime resources, exporters, streaming, and the
+TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md)
+and [Observation HTTP Transport](adr/ObservationHTTPTransport.md).
 
 ## Design Goals
 

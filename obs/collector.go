@@ -45,49 +45,63 @@ const (
 )
 
 type HealthEvidence struct {
-	Health  Health
-	Reasons []string
+	Health  Health   `json:"health"`
+	Reasons []string `json:"reasons"`
 }
 
 type RunView struct {
-	RunID, Pipeline    string
-	Status             pipeflow.Status
-	StartedAt, EndedAt time.Time
-	Duration           time.Duration
+	RunID     string          `json:"run_id"`
+	Pipeline  string          `json:"pipeline"`
+	Status    pipeflow.Status `json:"status"`
+	StartedAt time.Time       `json:"started_at"`
+	EndedAt   time.Time       `json:"ended_at"`
+	Duration  time.Duration   `json:"duration_ns"`
 }
 
 type PipelineView struct {
-	Name                                   string
-	Health                                 HealthEvidence
-	ActiveRuns, Started, Completed, Failed int64
-	LastStatus                             pipeflow.Status
-	LastActivity                           time.Time
+	Name         string          `json:"name"`
+	Health       HealthEvidence  `json:"health"`
+	ActiveRuns   int64           `json:"active_runs"`
+	Started      int64           `json:"started"`
+	Completed    int64           `json:"completed"`
+	Failed       int64           `json:"failed"`
+	LastStatus   pipeflow.Status `json:"last_status"`
+	LastActivity time.Time       `json:"last_activity"`
 }
 
 type ErrorGroup struct {
-	Pipeline, Stage, Step, Type string
-	Panic                       bool
-	Occurrences                 int64
-	FirstSeen, LastSeen         time.Time
+	Pipeline    string    `json:"pipeline"`
+	Stage       string    `json:"stage,omitempty"`
+	Step        string    `json:"step,omitempty"`
+	Type        string    `json:"type"`
+	Panic       bool      `json:"panic"`
+	Occurrences int64     `json:"occurrences"`
+	FirstSeen   time.Time `json:"first_seen"`
+	LastSeen    time.Time `json:"last_seen"`
 }
 
 type MetricAggregate struct {
-	Name                  string
-	Scope                 pipeflow.ObservationScope
-	Pipeline, Stage, Step string
-	Status                pipeflow.Status
-	Samples               int64
-	Sum                   float64
-	Unit                  string
-	FirstSeen, LastSeen   time.Time
+	Name      string                    `json:"name"`
+	Scope     pipeflow.ObservationScope `json:"scope"`
+	Pipeline  string                    `json:"pipeline"`
+	Stage     string                    `json:"stage,omitempty"`
+	Step      string                    `json:"step,omitempty"`
+	Status    pipeflow.Status           `json:"status"`
+	Samples   int64                     `json:"samples"`
+	Sum       float64                   `json:"sum"`
+	Unit      string                    `json:"unit"`
+	FirstSeen time.Time                 `json:"first_seen"`
+	LastSeen  time.Time                 `json:"last_seen"`
 }
 
 type ProfileAggregate struct {
-	Scope                 pipeflow.ObservationScope
-	Pipeline, Stage, Step string
-	Samples               int64
-	Total                 time.Duration
-	Maximum               time.Duration
+	Scope    pipeflow.ObservationScope `json:"scope"`
+	Pipeline string                    `json:"pipeline"`
+	Stage    string                    `json:"stage,omitempty"`
+	Step     string                    `json:"step,omitempty"`
+	Samples  int64                     `json:"samples"`
+	Total    time.Duration             `json:"total_ns"`
+	Maximum  time.Duration             `json:"maximum_ns"`
 }
 
 type Snapshot struct {
