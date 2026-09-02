@@ -99,6 +99,15 @@ type StepReport struct {
 	Error      error
 	Metadata   ResultMetadata
 	Recoveries []RecoveryReport
+	Circuit    *CircuitReport
+}
+
+type CircuitReport struct {
+	Dependency     string
+	StateBefore    CircuitState
+	StateAfter     CircuitState
+	Probe          bool
+	ShortCircuited bool
 }
 
 // RecoveryReport contains control-only recovery facts and nested execution reports.
@@ -471,6 +480,12 @@ func (r *runRecorder) appendRecovery(path stepReportPath, recovery RecoveryRepor
 	report.Recoveries = append(report.Recoveries, recovery)
 }
 
+func (r *runRecorder) setCircuit(path stepReportPath, circuit CircuitReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stepReport(path).Circuit = &circuit
+}
+
 func (r *runRecorder) startPoll(path stepReportPath, poll int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -630,6 +645,10 @@ func cloneStepReport(step StepReport) StepReport {
 	result.Metadata = cloneResultMetadata(step.Metadata)
 	result.Attempts = append([]AttemptReport(nil), step.Attempts...)
 	result.Recoveries = cloneRecoveryReports(step.Recoveries)
+	if step.Circuit != nil {
+		circuit := *step.Circuit
+		result.Circuit = &circuit
+	}
 	result.Polls = make([]PollReport, len(step.Polls))
 	for i, poll := range step.Polls {
 		result.Polls[i] = poll

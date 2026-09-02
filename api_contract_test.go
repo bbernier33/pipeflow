@@ -23,6 +23,9 @@ var (
 	_ func(string, ...pipeflow.Stage) *pipeflow.Subflow                                     = pipeflow.NewSubflow
 	_ func(string, ...pipeflow.StageItem) *pipeflow.RecoveryStage                           = pipeflow.NewRecoveryStage
 	_ func(*pipeflow.Step, *pipeflow.RecoveryStage, pipeflow.RecoveryPolicy) *pipeflow.Step = (*pipeflow.Step).WithRecovery
+	_ func(string, pipeflow.CircuitBreakerPolicy) (*pipeflow.CircuitBreaker, error)         = pipeflow.NewCircuitBreaker
+	_ func(*pipeflow.Step, *pipeflow.CircuitBreaker) *pipeflow.Step                         = (*pipeflow.Step).WithCircuitBreaker
+	_ func(*pipeflow.CircuitBreaker) pipeflow.CircuitSnapshot                               = (*pipeflow.CircuitBreaker).Snapshot
 
 	_ func(*pipeflow.Pipeline, context.Context, ...any) (any, error)                                         = (*pipeflow.Pipeline).Run
 	_ func(*pipeflow.Pipeline, context.Context, ...any) (any, pipeflow.RunReport, error)                     = (*pipeflow.Pipeline).RunWithReport

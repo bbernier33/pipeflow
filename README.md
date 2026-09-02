@@ -95,6 +95,30 @@ Recovery is bounded and run-scoped. Concurrent recoveries do not single-flight;
 shared application state must use normal Go synchronization. See
 [Operational Recovery](adr/OperationalRecovery.md).
 
+### Circuit Breaker / Dependency Guard
+
+Share an explicit breaker wherever Steps call the same logical dependency:
+
+```go
+provider, err := pipeflow.NewCircuitBreaker("orders-api", pipeflow.CircuitBreakerPolicy{
+    FailureThreshold:  5,
+    ObservationWindow: time.Minute,
+    OpenDuration:      30 * time.Second,
+    HalfOpenMaxProbes: 1,
+    IsFailure: func(err error) bool {
+        return errors.Is(err, ErrProviderUnavailable)
+    },
+})
+
+fetch.WithCircuitBreaker(provider)
+update.WithCircuitBreaker(provider)
+```
+
+The predicate is required: Pipeflow never assumes ordinary business errors
+mean that a dependency is unhealthy. `provider.Snapshot()` exposes read-only
+live state, and each protected Step records a payload-free circuit report. See
+[Circuit Breaker](adr/CircuitBreaker.md).
+
 ## Design Goals
 
 Pipeflow should be:

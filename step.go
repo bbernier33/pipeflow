@@ -41,6 +41,7 @@ type Step struct {
 	metadata       *compiledMetadataExtractor
 	recovery       *RecoveryStage
 	recoveryPolicy RecoveryPolicy
+	circuit        *CircuitBreaker
 }
 
 // NewStep creates a Step from a supported ordinary Go function and options.
@@ -127,6 +128,27 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		return nil, annotateExecutionError(fmt.Errorf("input: %w", err), "", "", s.name, 0)
 	}
 	ctx.Logger().Info("Running step: " + s.name)
+	var permit circuitPermit
+	if s.circuit != nil {
+		var circuitErr error
+		permit, circuitErr = s.circuit.acquire(time.Now())
+		if circuitErr != nil {
+			if recorder != nil {
+				recorder.setCircuit(reportPath, CircuitReport{Dependency: s.circuit.name, StateBefore: s.circuit.Snapshot().State, StateAfter: s.circuit.Snapshot().State, ShortCircuited: true})
+			}
+			return nil, annotateExecutionError(circuitErr, "", "", s.name, 0)
+		}
+		defer func() {
+			after, predicateErr := permit.finish(err)
+			if recorder != nil {
+				recorder.setCircuit(reportPath, CircuitReport{Dependency: s.circuit.name, StateBefore: permit.before.State, StateAfter: after.State, Probe: permit.probe})
+			}
+			if predicateErr != nil {
+				output = nil
+				err = errors.Join(err, annotateExecutionError(predicateErr, "", "", s.name, 0))
+			}
+		}()
+	}
 	for recoveryAttempt := 0; ; recoveryAttempt++ {
 		normalCtx := goCtx
 		cancel := func() {}

@@ -65,6 +65,26 @@ func ExampleStep_WithRecovery() {
 	// Output: orders <nil>
 }
 
+func ExampleCircuitBreaker() {
+	dependencyErr := errors.New("provider unavailable")
+	breaker, _ := pipeflow.NewCircuitBreaker("orders-api", pipeflow.CircuitBreakerPolicy{
+		FailureThreshold:  3,
+		ObservationWindow: time.Minute,
+		OpenDuration:      30 * time.Second,
+		HalfOpenMaxProbes: 1,
+		IsFailure: func(err error) bool {
+			return errors.Is(err, dependencyErr)
+		},
+	})
+
+	fetch := pipeflow.NewStep("fetch", func() error {
+		return dependencyErr
+	}).WithCircuitBreaker(breaker)
+	_ = fetch
+	fmt.Println(breaker.Snapshot().State)
+	// Output: closed
+}
+
 func ExamplePipeline_ValidateInput() {
 	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("process",
 		pipeflow.NewStep("validate", func(orderID int) error { return nil }),
