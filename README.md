@@ -142,6 +142,30 @@ Recovery. The built-in memory store is process-local; durable or distributed
 guarantees come from application-provided stores. Pipeflow does not promise
 exactly-once execution. See [Idempotency Guard](adr/IdempotencyGuard.md).
 
+## Observation / Operations Tool (v2.x development)
+
+The separate `obs` package consumes Pipeflow telemetry without participating
+in execution:
+
+```go
+collector := obs.NewCollector(obs.Options{
+    TraceCapacity:  5_000,
+    RunCapacity:    500,
+})
+
+pipeline = pipeline.WithObserver(collector)
+snapshot := collector.Snapshot()
+```
+
+The initial in-process collector provides bounded recent telemetry, run and
+pipeline views, explainable basic health, structurally grouped error classes,
+metric aggregates, and profile totals. Snapshots are detached and read-only;
+the collector never receives business payloads or error messages.
+
+Network transports, persistent history, resilience-specific views, runtime
+resources, exporters, and the TUI remain later v2.x slices. See
+[Observation Tool Foundation](adr/ObservationToolFoundation.md).
+
 ## Design Goals
 
 Pipeflow should be:
