@@ -34,6 +34,9 @@ func TestScenarioRunsPipelineAndEvaluatesOutput(t *testing.T) {
 	if result.Report.Status != pipeflow.StatusCompleted || result.Report.RunID == "" {
 		t.Fatalf("report = %#v", result.Report)
 	}
+	if result.EndedAt.IsZero() || result.EndedAt.Before(result.StartedAt) {
+		t.Fatalf("scenario timing = %#v", result)
+	}
 }
 
 func TestExpectedPipelineFailureCanPass(t *testing.T) {

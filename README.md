@@ -458,13 +458,37 @@ min/mean/p50/p95/p99/max execution latency. Input factories and expectation
 panics become ordinary failed evidence. Cancellation stops submission and waits
 for already-started runs.
 
-Flow pressure, injection, chaos, suites, and aggregate readiness verdicts remain
-later v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
+Flow-pressure plans drive the real bounded Worker queue:
+
+```go
+pressure := readiness.NewPressurePlan(scenario, readiness.PressureConfig{
+    Items: 5_000,
+    Worker: pipeflow.WorkerOptions{Workers: 8, Buffer: 64, MaxInFlight: 72},
+    BackpressureThreshold: time.Millisecond,
+}).
+    Inputs(eventInput).
+    Expect(
+        readiness.BackpressureObserved(),
+        readiness.QueueDepthAtMost(64),
+        readiness.AllAcceptedWorkDrained(),
+    )
+result := pressure.Run(context.Background())
+```
+
+The result records submit latency and blocking, maximum queue depth/in-flight/
+active work, rejection and failure counts, report-derived completion order,
+graceful drain, and final Worker status. Every accepted item retains its complete
+payload-free report and Scenario checks; outputs are discarded. Single-worker
+ordering can be asserted explicitly with `CompletionOrderPreserved`.
+
+Failure injection, chaos, suites, and aggregate readiness verdicts remain later
+v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
 [Readiness Type-Aware Payload Mutation](adr/ReadinessPayloadMutation.md), and
 [Readiness Semantic Mutation](adr/ReadinessSemanticMutation.md), and
-[Readiness Stress and Load Testing](adr/ReadinessStressLoad.md).
+[Readiness Stress and Load Testing](adr/ReadinessStressLoad.md), and
+[Readiness Flow Pressure and Backpressure](adr/ReadinessFlowPressure.md).
 
 ## Design Goals
 

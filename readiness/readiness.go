@@ -136,9 +136,9 @@ type Result struct {
 }
 
 // Run validates and executes the Scenario, then evaluates every expectation.
-func (s Scenario) Run(ctx context.Context) Result {
+func (s Scenario) Run(ctx context.Context) (result Result) {
 	started := time.Now()
-	result := Result{Name: s.name, Arrangement: s.arrangement, Verdict: VerdictFail, StartedAt: started}
+	result = Result{Name: s.name, Arrangement: s.arrangement, Verdict: VerdictFail, StartedAt: started}
 	defer func() {
 		result.EndedAt = time.Now()
 		result.Duration = result.EndedAt.Sub(started)
