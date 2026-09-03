@@ -17,6 +17,10 @@ capture age; when both are zero the safe default is 1000 snapshots. Pruning
 occurs after a successful append. Corrupt or unsupported records return named,
 actionable errors and are not silently skipped.
 
+Readers ignore additive JSON fields so v1 records can gain new payload-free
+snapshot views compatibly. A change in meaning or representation requires a new
+history schema version.
+
 ## Data and ownership boundary
 
 History stores the same payload-free Snapshot exposed by `obs.Source`: names,

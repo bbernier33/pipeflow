@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	pipeflow "github.com/bbernier33/pipeflow"
 	"github.com/bbernier33/pipeflow/obs"
@@ -67,7 +68,7 @@ func TestSnapshotEndpointUsesVersionedPayloadFreeJSON(t *testing.T) {
 
 func TestHealthAndLivenessEndpoints(t *testing.T) {
 	handler := observedHandler(t, obshttp.Options{})
-	for _, path := range []string{"/healthz", "/v1/health", "/v1/workers", "/v1/queues", "/v1/resilience", "/v1/explain"} {
+	for _, path := range []string{"/healthz", "/v1/health", "/v1/workers", "/v1/queues", "/v1/resilience", "/v1/explain", "/v1/resources"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {
@@ -260,5 +261,31 @@ func TestExplainEndpointReturnsStructuredEvidence(t *testing.T) {
 	}
 	if len(document.Analysis.Findings) != 1 || document.Analysis.Findings[0].Code != "queue_pressure" || len(document.Analysis.Findings[0].Evidence) == 0 {
 		t.Fatalf("document=%+v", document)
+	}
+}
+
+func TestResourcesEndpointIncludesTemporalCorrelation(t *testing.T) {
+	when := time.Now()
+	snapshot := obs.Snapshot{
+		RecentResources: []obs.ResourceSample{{OccurredAt: when, HeapAlloc: 1024}},
+		Traces:          []pipeflow.TraceEvent{{Scope: pipeflow.ObservationStep, Phase: pipeflow.ObservationCompleted, OccurredAt: when.Add(time.Second)}},
+	}
+	handler, err := obshttp.NewHandler(fixedSource{snapshot: snapshot}, obshttp.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/resources", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d", response.Code)
+	}
+	var document struct {
+		Correlations []json.RawMessage `json:"correlations"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Correlations) != 1 || !strings.Contains(string(document.Correlations[0]), `"heap_alloc_bytes":1024`) {
+		t.Fatalf("document=%+v body=%s", document, response.Body.String())
 	}
 }

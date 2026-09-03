@@ -149,8 +149,9 @@ in execution:
 
 ```go
 collector := obs.NewCollector(obs.Options{
-    TraceCapacity:  5_000,
-    RunCapacity:    500,
+    TraceCapacity:    5_000,
+    RunCapacity:      500,
+    ResourceCapacity: 1_000,
 })
 
 pipeline = pipeline.WithObserver(collector)
@@ -233,6 +234,25 @@ Step time, Pipeline failure rate, Recovery activity, Circuit state, and
 Idempotency anomalies. Empty findings mean no configured threshold was crossed,
 not proof that the application is healthy.
 
+Runtime correlation is explicit and caller-scheduled:
+
+```go
+// Call from an application-owned ticker or at an incident boundary.
+sample := collector.CaptureRuntime()
+
+correlations, err := obs.CorrelateResources(
+    collector.Snapshot(),
+    obs.CorrelationOptions{MaxSampleAge: 30 * time.Second},
+)
+```
+
+The standard sample includes heap/allocation counters, goroutines, cgo calls,
+stack use, and GC activity. `RecordResource` accepts equivalent samples from
+external process/system samplers. Correlation associates each execution event
+with its latest preceding fresh sample; it describes timing, not causation.
+Pipeflow does not invent process CPU percentages unavailable from Go's standard
+library.
+
 Operational history is opt-in and recorded outside execution:
 
 ```go
@@ -279,7 +299,8 @@ mux.Handle("/operations/", http.StripPrefix("/operations", handler))
 ```
 
 The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
-`/v1/queues`, `/v1/resilience`, `/v1/config`, `/v1/explain`, optional `/v1/history`, and `/v1/snapshot`.
+`/v1/queues`, `/v1/resilience`, `/v1/config`, `/v1/explain`, `/v1/resources`,
+optional `/v1/history`, and `/v1/snapshot`.
 History accepts RFC3339 `from`/`to`, `limit` (maximum 1000), and `order=asc|desc`.
 Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
@@ -291,6 +312,7 @@ TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationT
 [Persistent Observation History](adr/PersistentObservationHistory.md), and
 [Effective Configuration View](adr/EffectiveConfigurationView.md), and
 [Explain and Bottleneck Analysis](adr/ExplainBottleneckAnalysis.md), and
+[Runtime Resource Correlation](adr/RuntimeResourceCorrelation.md), and
 [Observation HTTP Transport](adr/ObservationHTTPTransport.md).
 
 ## Design Goals

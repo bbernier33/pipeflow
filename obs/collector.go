@@ -3,6 +3,8 @@ package obs
 import (
 	"errors"
 	"fmt"
+	"math"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -11,10 +13,11 @@ import (
 )
 
 type Options struct {
-	TraceCapacity   int
-	MetricCapacity  int
-	ProfileCapacity int
-	RunCapacity     int
+	TraceCapacity    int
+	MetricCapacity   int
+	ProfileCapacity  int
+	RunCapacity      int
+	ResourceCapacity int
 }
 
 func (o Options) normalized() Options {
@@ -29,6 +32,9 @@ func (o Options) normalized() Options {
 	}
 	if o.RunCapacity <= 0 {
 		o.RunCapacity = 250
+	}
+	if o.ResourceCapacity <= 0 {
+		o.ResourceCapacity = 1000
 	}
 	return o
 }
@@ -173,23 +179,53 @@ type DefinitionView struct {
 	Effective   *pipeflow.EffectivePipelineConfig
 }
 
+// ResourceSample is one payload-free Go runtime measurement.
+type ResourceSample struct {
+	OccurredAt    time.Time     `json:"occurred_at"`
+	Uptime        time.Duration `json:"uptime_ns"`
+	Goroutines    int           `json:"goroutines"`
+	CGoCalls      int64         `json:"cgo_calls"`
+	HeapAlloc     uint64        `json:"heap_alloc_bytes"`
+	HeapInUse     uint64        `json:"heap_in_use_bytes"`
+	HeapObjects   uint64        `json:"heap_objects"`
+	StackInUse    uint64        `json:"stack_in_use_bytes"`
+	TotalAlloc    uint64        `json:"total_alloc_bytes"`
+	Mallocs       uint64        `json:"mallocs"`
+	Frees         uint64        `json:"frees"`
+	NextGC        uint64        `json:"next_gc_bytes"`
+	GCCycles      uint32        `json:"gc_cycles"`
+	GCPauseTotal  time.Duration `json:"gc_pause_total_ns"`
+	LastGCPause   time.Duration `json:"last_gc_pause_ns"`
+	GCCPUFraction float64       `json:"gc_cpu_fraction"`
+}
+
+type ResourceView struct {
+	Samples         int             `json:"samples"`
+	Latest          *ResourceSample `json:"latest,omitempty"`
+	HeapAllocChange int64           `json:"heap_alloc_change_bytes"`
+	GoroutineChange int             `json:"goroutine_change"`
+	GCCycleChange   uint32          `json:"gc_cycle_change"`
+}
+
 type Snapshot struct {
-	CapturedAt                                     time.Time
-	Pipelines                                      []PipelineView
-	Runs                                           []RunView
-	Errors                                         []ErrorGroup
-	Metrics                                        []MetricAggregate
-	Profiles                                       []ProfileAggregate
-	Workers                                        []WorkerView
-	Queues                                         []QueueView
-	Recoveries                                     []RecoveryView
-	Circuits                                       []CircuitView
-	Idempotency                                    []IdempotencyView
-	Definitions                                    []DefinitionView
-	Traces                                         []pipeflow.TraceEvent
-	RecentMetrics                                  []pipeflow.MetricSample
-	RecentProfiles                                 []pipeflow.ProfileSample
-	DroppedTraces, DroppedMetrics, DroppedProfiles uint64
+	CapturedAt                                                       time.Time
+	Pipelines                                                        []PipelineView
+	Runs                                                             []RunView
+	Errors                                                           []ErrorGroup
+	Metrics                                                          []MetricAggregate
+	Profiles                                                         []ProfileAggregate
+	Workers                                                          []WorkerView
+	Queues                                                           []QueueView
+	Recoveries                                                       []RecoveryView
+	Circuits                                                         []CircuitView
+	Idempotency                                                      []IdempotencyView
+	Definitions                                                      []DefinitionView
+	Resources                                                        ResourceView
+	RecentResources                                                  []ResourceSample
+	Traces                                                           []pipeflow.TraceEvent
+	RecentMetrics                                                    []pipeflow.MetricSample
+	RecentProfiles                                                   []pipeflow.ProfileSample
+	DroppedTraces, DroppedMetrics, DroppedProfiles, DroppedResources uint64
 }
 
 type runKey string
@@ -234,10 +270,52 @@ type Collector struct {
 	circuits                                       map[string]CircuitView
 	idempotency                                    map[string]IdempotencyView
 	definitions                                    map[string]*trackedDefinition
+	resources                                      []ResourceSample
+	droppedResources                               uint64
+	createdAt                                      time.Time
 }
 
 func NewCollector(options Options) *Collector {
-	return &Collector{options: options.normalized(), runs: make(map[runKey]RunView), pipelines: make(map[string]*pipelineState), metricAggregates: make(map[metricKey]MetricAggregate), profileAggregates: make(map[profileKey]ProfileAggregate), errors: make(map[errorKey]ErrorGroup), workers: make(map[string]*trackedWorker), recoveries: make(map[string]RecoveryView), circuits: make(map[string]CircuitView), idempotency: make(map[string]IdempotencyView), definitions: make(map[string]*trackedDefinition)}
+	return &Collector{options: options.normalized(), runs: make(map[runKey]RunView), pipelines: make(map[string]*pipelineState), metricAggregates: make(map[metricKey]MetricAggregate), profileAggregates: make(map[profileKey]ProfileAggregate), errors: make(map[errorKey]ErrorGroup), workers: make(map[string]*trackedWorker), recoveries: make(map[string]RecoveryView), circuits: make(map[string]CircuitView), idempotency: make(map[string]IdempotencyView), definitions: make(map[string]*trackedDefinition), createdAt: time.Now()}
+}
+
+// CaptureRuntime records and returns one synchronous Go runtime sample.
+func (c *Collector) CaptureRuntime() ResourceSample {
+	now := time.Now()
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	sample := ResourceSample{OccurredAt: now, Goroutines: runtime.NumGoroutine(), CGoCalls: runtime.NumCgoCall(), HeapAlloc: memory.HeapAlloc, HeapInUse: memory.HeapInuse, HeapObjects: memory.HeapObjects, StackInUse: memory.StackInuse, TotalAlloc: memory.TotalAlloc, Mallocs: memory.Mallocs, Frees: memory.Frees, NextGC: memory.NextGC, GCCycles: memory.NumGC, GCPauseTotal: time.Duration(memory.PauseTotalNs), GCCPUFraction: memory.GCCPUFraction}
+	if memory.NumGC > 0 {
+		sample.LastGCPause = time.Duration(memory.PauseNs[(memory.NumGC-1)%uint32(len(memory.PauseNs))])
+	}
+	if c != nil {
+		sample.Uptime = now.Sub(c.createdAt)
+		_ = c.RecordResource(sample)
+	}
+	return sample
+}
+
+// RecordResource adds a sample supplied by an application or external sampler.
+func (c *Collector) RecordResource(sample ResourceSample) error {
+	if c == nil {
+		return errors.New("pipeflow obs: nil Collector")
+	}
+	if sample.OccurredAt.IsZero() {
+		return errors.New("pipeflow obs: resource sample has zero occurrence time")
+	}
+	if sample.Uptime < 0 || sample.GCPauseTotal < 0 || sample.LastGCPause < 0 || math.IsNaN(sample.GCCPUFraction) || math.IsInf(sample.GCCPUFraction, 0) || sample.GCCPUFraction < 0 || sample.GCCPUFraction > 1 {
+		return errors.New("pipeflow obs: resource sample contains invalid runtime values")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resources = append(c.resources, sample)
+	sort.SliceStable(c.resources, func(i, j int) bool { return c.resources[i].OccurredAt.Before(c.resources[j].OccurredAt) })
+	if len(c.resources) > c.options.ResourceCapacity {
+		copy(c.resources, c.resources[len(c.resources)-c.options.ResourceCapacity:])
+		c.resources = c.resources[:c.options.ResourceCapacity]
+		c.droppedResources++
+	}
+	return nil
 }
 
 // TrackPipeline adds immutable topology and effective configuration to future
@@ -492,7 +570,8 @@ func (c *Collector) Snapshot() Snapshot {
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	result := Snapshot{CapturedAt: time.Now(), Traces: append([]pipeflow.TraceEvent(nil), c.traces...), RecentMetrics: append([]pipeflow.MetricSample(nil), c.metrics...), RecentProfiles: append([]pipeflow.ProfileSample(nil), c.profiles...), DroppedTraces: c.droppedTraces, DroppedMetrics: c.droppedMetrics, DroppedProfiles: c.droppedProfiles}
+	result := Snapshot{CapturedAt: time.Now(), Traces: append([]pipeflow.TraceEvent(nil), c.traces...), RecentMetrics: append([]pipeflow.MetricSample(nil), c.metrics...), RecentProfiles: append([]pipeflow.ProfileSample(nil), c.profiles...), RecentResources: append([]ResourceSample(nil), c.resources...), DroppedTraces: c.droppedTraces, DroppedMetrics: c.droppedMetrics, DroppedProfiles: c.droppedProfiles, DroppedResources: c.droppedResources}
+	result.Resources = deriveResources(result.RecentResources)
 	for _, state := range c.pipelines {
 		view := state.view
 		view.Health = deriveHealth(view)
@@ -533,6 +612,37 @@ func (c *Collector) Snapshot() Snapshot {
 	}
 	sortSnapshot(&result)
 	return result
+}
+
+func deriveResources(samples []ResourceSample) ResourceView {
+	view := ResourceView{Samples: len(samples)}
+	if len(samples) == 0 {
+		return view
+	}
+	first, latest := samples[0], samples[len(samples)-1]
+	copy := latest
+	view.Latest = &copy
+	view.HeapAllocChange = signedUint64Delta(latest.HeapAlloc, first.HeapAlloc)
+	view.GoroutineChange = latest.Goroutines - first.Goroutines
+	if latest.GCCycles >= first.GCCycles {
+		view.GCCycleChange = latest.GCCycles - first.GCCycles
+	}
+	return view
+}
+
+func signedUint64Delta(after, before uint64) int64 {
+	if after >= before {
+		delta := after - before
+		if delta > uint64(^uint64(0)>>1) {
+			return int64(^uint64(0) >> 1)
+		}
+		return int64(delta)
+	}
+	delta := before - after
+	if delta > uint64(^uint64(0)>>1) {
+		return -int64(^uint64(0)>>1) - 1
+	}
+	return -int64(delta)
 }
 
 func deriveHealth(view PipelineView) HealthEvidence {

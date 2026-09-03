@@ -15,6 +15,7 @@ The transport exposes:
 - `GET` and `HEAD /v1/resilience` for Recovery, Circuit, and Idempotency views;
 - `GET` and `HEAD /v1/config` for registered topology and effective settings;
 - `GET` and `HEAD /v1/explain` for current derived findings and bottlenecks;
+- `GET` and `HEAD /v1/resources` for runtime samples and temporal correlation;
 - optional `GET` and `HEAD /v1/history` for bounded persistent snapshots;
 - `GET` and `HEAD /v1/snapshot` for the complete bounded snapshot.
 

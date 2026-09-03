@@ -275,7 +275,6 @@ func readSnapshot(path string) (obs.Snapshot, error) {
 	defer file.Close()
 	var value record
 	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&value); err != nil {
 		return obs.Snapshot{}, fmt.Errorf("pipeflow obs history: decode record %q: %w", filepath.Base(path), err)
 	}

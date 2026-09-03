@@ -59,3 +59,10 @@ func ExampleAnalyze() {
 	fmt.Println(analysis.Findings[0].Code, analysis.Findings[0].Severity)
 	// Output: queue_pressure warning
 }
+
+func ExampleCollector_CaptureRuntime() {
+	collector := obs.NewCollector(obs.Options{ResourceCapacity: 10})
+	sample := collector.CaptureRuntime()
+	fmt.Println(sample.Goroutines > 0, collector.Snapshot().Resources.Samples)
+	// Output: true 1
+}

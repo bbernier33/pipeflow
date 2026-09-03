@@ -284,3 +284,69 @@ func TestCollectorTracksUnconfiguredTopologyWithoutEffectiveConfig(t *testing.T)
 		t.Fatalf("definition=%+v", definition)
 	}
 }
+
+func TestCollectorCorrelatesBoundedRuntimeResources(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{ResourceCapacity: 2})
+	base := time.Now()
+	for _, sample := range []obs.ResourceSample{
+		{OccurredAt: base.Add(2 * time.Second), HeapAlloc: 300, Goroutines: 5, GCCycles: 3},
+		{OccurredAt: base, HeapAlloc: 100, Goroutines: 2, GCCycles: 1},
+		{OccurredAt: base.Add(time.Second), HeapAlloc: 200, Goroutines: 3, GCCycles: 2},
+	} {
+		if err := collector.RecordResource(sample); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := collector.Snapshot()
+	if len(snapshot.RecentResources) != 2 || !snapshot.RecentResources[0].OccurredAt.Equal(base.Add(time.Second)) || snapshot.DroppedResources != 1 {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	if snapshot.Resources.Latest == nil || snapshot.Resources.Latest.HeapAlloc != 300 || snapshot.Resources.HeapAllocChange != 100 || snapshot.Resources.GoroutineChange != 2 || snapshot.Resources.GCCycleChange != 1 {
+		t.Fatalf("resources=%+v", snapshot.Resources)
+	}
+	snapshot.Resources.Latest.HeapAlloc = 999
+	if collector.Snapshot().Resources.Latest.HeapAlloc != 300 {
+		t.Fatal("resource view was not detached")
+	}
+}
+
+func TestCaptureRuntimeRecordsStandardLibraryMetrics(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{})
+	sample := collector.CaptureRuntime()
+	if sample.OccurredAt.IsZero() || sample.Goroutines < 1 || sample.HeapInUse == 0 || sample.Uptime < 0 {
+		t.Fatalf("sample=%+v", sample)
+	}
+	if snapshot := collector.Snapshot(); len(snapshot.RecentResources) != 1 || snapshot.Resources.Latest == nil {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+}
+
+func TestRecordResourceValidatesSamples(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{})
+	if err := collector.RecordResource(obs.ResourceSample{}); err == nil {
+		t.Fatal("expected timestamp error")
+	}
+	if err := collector.RecordResource(obs.ResourceSample{OccurredAt: time.Now(), GCCPUFraction: 2}); err == nil {
+		t.Fatal("expected value error")
+	}
+}
+
+func TestResourceRecordingSupportsConcurrentSnapshots(t *testing.T) {
+	collector := obs.NewCollector(obs.Options{ResourceCapacity: 100})
+	base := time.Now()
+	var wait sync.WaitGroup
+	for i := range 50 {
+		wait.Add(2)
+		go func(i int) {
+			defer wait.Done()
+			if err := collector.RecordResource(obs.ResourceSample{OccurredAt: base.Add(time.Duration(i) * time.Nanosecond), HeapAlloc: uint64(i)}); err != nil {
+				t.Error(err)
+			}
+		}(i)
+		go func() { defer wait.Done(); _ = collector.Snapshot() }()
+	}
+	wait.Wait()
+	if got := len(collector.Snapshot().RecentResources); got != 50 {
+		t.Fatalf("samples=%d", got)
+	}
+}

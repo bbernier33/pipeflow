@@ -157,3 +157,35 @@ func TestStoreValidatesInputs(t *testing.T) {
 		t.Fatal("expected limit error")
 	}
 }
+
+func TestStorePersistsResourcesAndIgnoresAdditiveFields(t *testing.T) {
+	dir := t.TempDir()
+	store, err := history.Open(dir, history.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().UTC()
+	snapshot := obs.Snapshot{CapturedAt: when, RecentResources: []obs.ResourceSample{{OccurredAt: when, HeapAlloc: 2048}}}
+	if err := store.Append(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	values, err := store.Query(history.Query{})
+	if err != nil || len(values) != 1 || values[0].RecentResources[0].HeapAlloc != 2048 {
+		t.Fatalf("values=%+v err=%v", values, err)
+	}
+
+	forwardDir := t.TempDir()
+	forward, err := history.Open(forwardDir, history.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "00000000000000000001-00000000000000000001.json"
+	document := `{"schema":"` + history.SchemaVersion + `","snapshot":{"CapturedAt":"` + when.Format(time.RFC3339Nano) + `","FutureView":{"value":1}}}`
+	if err := os.WriteFile(filepath.Join(forwardDir, name), []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values, err = forward.Query(history.Query{})
+	if err != nil || len(values) != 1 || !values[0].CapturedAt.Equal(when) {
+		t.Fatalf("forward values=%+v err=%v", values, err)
+	}
+}

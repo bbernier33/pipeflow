@@ -86,6 +86,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, r, http.StatusOK, explainDocument{Schema: SchemaVersion, Analysis: analysis})
+	case "/v1/resources":
+		correlations, err := obs.CorrelateResources(snapshot, obs.CorrelationOptions{})
+		if err != nil {
+			writeError(w, r, http.StatusInternalServerError, "correlation_unavailable")
+			return
+		}
+		writeJSON(w, r, http.StatusOK, resourceDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Resources: snapshot.Resources, Recent: snapshot.RecentResources, Correlations: wireCorrelations(correlations), Dropped: snapshot.DroppedResources})
 	default:
 		writeError(w, r, http.StatusNotFound, "not_found")
 	}
@@ -192,6 +199,19 @@ type explainDocument struct {
 	Schema   string       `json:"schema"`
 	Analysis obs.Analysis `json:"analysis"`
 }
+type resourceDocument struct {
+	Schema       string                    `json:"schema"`
+	CapturedAt   time.Time                 `json:"captured_at"`
+	Resources    obs.ResourceView          `json:"resources"`
+	Recent       []obs.ResourceSample      `json:"recent"`
+	Correlations []resourceCorrelationWire `json:"correlations"`
+	Dropped      uint64                    `json:"dropped"`
+}
+type resourceCorrelationWire struct {
+	Event     traceWire          `json:"event"`
+	Resource  obs.ResourceSample `json:"resource"`
+	SampleAge time.Duration      `json:"sample_age_ns"`
+}
 type definitionWire struct {
 	Name        string                 `json:"name"`
 	Description descriptionWire        `json:"description"`
@@ -265,25 +285,28 @@ type effectiveStepWire struct {
 	RateLimit effectiveValueWire[rateLimitWire]     `json:"rate_limit"`
 }
 type snapshotWire struct {
-	Schema          string                 `json:"schema"`
-	CapturedAt      time.Time              `json:"captured_at"`
-	Pipelines       []obs.PipelineView     `json:"pipelines"`
-	Runs            []obs.RunView          `json:"runs"`
-	Errors          []obs.ErrorGroup       `json:"errors"`
-	Metrics         []obs.MetricAggregate  `json:"metrics"`
-	Profiles        []obs.ProfileAggregate `json:"profiles"`
-	Workers         []obs.WorkerView       `json:"workers"`
-	Queues          []obs.QueueView        `json:"queues"`
-	Recoveries      []obs.RecoveryView     `json:"recoveries"`
-	Circuits        []obs.CircuitView      `json:"circuits"`
-	Idempotency     []obs.IdempotencyView  `json:"idempotency"`
-	Definitions     []definitionWire       `json:"definitions"`
-	Traces          []traceWire            `json:"traces"`
-	RecentMetrics   []metricWire           `json:"recent_metrics"`
-	RecentProfiles  []profileWire          `json:"recent_profiles"`
-	DroppedTraces   uint64                 `json:"dropped_traces"`
-	DroppedMetrics  uint64                 `json:"dropped_metrics"`
-	DroppedProfiles uint64                 `json:"dropped_profiles"`
+	Schema           string                 `json:"schema"`
+	CapturedAt       time.Time              `json:"captured_at"`
+	Pipelines        []obs.PipelineView     `json:"pipelines"`
+	Runs             []obs.RunView          `json:"runs"`
+	Errors           []obs.ErrorGroup       `json:"errors"`
+	Metrics          []obs.MetricAggregate  `json:"metrics"`
+	Profiles         []obs.ProfileAggregate `json:"profiles"`
+	Workers          []obs.WorkerView       `json:"workers"`
+	Queues           []obs.QueueView        `json:"queues"`
+	Recoveries       []obs.RecoveryView     `json:"recoveries"`
+	Circuits         []obs.CircuitView      `json:"circuits"`
+	Idempotency      []obs.IdempotencyView  `json:"idempotency"`
+	Definitions      []definitionWire       `json:"definitions"`
+	Traces           []traceWire            `json:"traces"`
+	RecentMetrics    []metricWire           `json:"recent_metrics"`
+	RecentProfiles   []profileWire          `json:"recent_profiles"`
+	Resources        obs.ResourceView       `json:"resources"`
+	RecentResources  []obs.ResourceSample   `json:"recent_resources"`
+	DroppedTraces    uint64                 `json:"dropped_traces"`
+	DroppedMetrics   uint64                 `json:"dropped_metrics"`
+	DroppedProfiles  uint64                 `json:"dropped_profiles"`
+	DroppedResources uint64                 `json:"dropped_resources"`
 }
 type locationWire struct {
 	RunID              string                      `json:"run_id,omitempty"`
@@ -338,7 +361,7 @@ type profileWire struct {
 }
 
 func snapshotDocument(s obs.Snapshot) snapshotWire {
-	w := snapshotWire{Schema: SchemaVersion, CapturedAt: s.CapturedAt, Pipelines: s.Pipelines, Runs: s.Runs, Errors: s.Errors, Metrics: s.Metrics, Profiles: s.Profiles, Workers: s.Workers, Queues: s.Queues, Recoveries: s.Recoveries, Circuits: s.Circuits, Idempotency: s.Idempotency, Definitions: wireDefinitions(s.Definitions), DroppedTraces: s.DroppedTraces, DroppedMetrics: s.DroppedMetrics, DroppedProfiles: s.DroppedProfiles}
+	w := snapshotWire{Schema: SchemaVersion, CapturedAt: s.CapturedAt, Pipelines: s.Pipelines, Runs: s.Runs, Errors: s.Errors, Metrics: s.Metrics, Profiles: s.Profiles, Workers: s.Workers, Queues: s.Queues, Recoveries: s.Recoveries, Circuits: s.Circuits, Idempotency: s.Idempotency, Definitions: wireDefinitions(s.Definitions), Resources: s.Resources, RecentResources: s.RecentResources, DroppedTraces: s.DroppedTraces, DroppedMetrics: s.DroppedMetrics, DroppedProfiles: s.DroppedProfiles, DroppedResources: s.DroppedResources}
 	for _, v := range s.Traces {
 		e := (*errorWire)(nil)
 		if v.Error != nil {
@@ -353,6 +376,18 @@ func snapshotDocument(s obs.Snapshot) snapshotWire {
 		w.RecentProfiles = append(w.RecentProfiles, profileWire{Location: wireLocation(v.Location), Scope: v.Scope, Duration: v.Duration, Status: v.Status, OccurredAt: v.OccurredAt})
 	}
 	return w
+}
+
+func wireCorrelations(values []obs.ResourceCorrelation) []resourceCorrelationWire {
+	result := make([]resourceCorrelationWire, 0, len(values))
+	for _, value := range values {
+		var eventError *errorWire
+		if value.Event.Error != nil {
+			eventError = &errorWire{Type: value.Event.Error.Type, Panic: value.Event.Error.Panic}
+		}
+		result = append(result, resourceCorrelationWire{Event: traceWire{Scope: value.Event.Scope, Phase: value.Event.Phase, Location: wireLocation(value.Event.Location), Status: value.Event.Status, OccurredAt: value.Event.OccurredAt, Duration: value.Event.Duration, Error: eventError}, Resource: value.Resource, SampleAge: value.SampleAge})
+	}
+	return result
 }
 
 func wireDefinitions(values []obs.DefinitionView) []definitionWire {
