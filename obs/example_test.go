@@ -52,3 +52,10 @@ func ExampleCollector_TrackPipeline() {
 	fmt.Println(definition.Name, definition.Description.Children[0].Name, definition.Effective == nil)
 	// Output: orders process true
 }
+
+func ExampleAnalyze() {
+	snapshot := obs.Snapshot{Queues: []obs.QueueView{{Worker: "primary", Pipeline: "orders", Depth: 9, Capacity: 10, Utilization: .9}}}
+	analysis, _ := obs.Analyze(snapshot, obs.AnalysisOptions{})
+	fmt.Println(analysis.Findings[0].Code, analysis.Findings[0].Severity)
+	// Output: queue_pressure warning
+}

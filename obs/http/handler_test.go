@@ -67,7 +67,7 @@ func TestSnapshotEndpointUsesVersionedPayloadFreeJSON(t *testing.T) {
 
 func TestHealthAndLivenessEndpoints(t *testing.T) {
 	handler := observedHandler(t, obshttp.Options{})
-	for _, path := range []string{"/healthz", "/v1/health", "/v1/workers", "/v1/queues", "/v1/resilience"} {
+	for _, path := range []string{"/healthz", "/v1/health", "/v1/workers", "/v1/queues", "/v1/resilience", "/v1/explain"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {
@@ -123,6 +123,10 @@ func TestHeadAndNotFound(t *testing.T) {
 type panicSource struct{}
 
 func (panicSource) Snapshot() obs.Snapshot { panic("private source failure") }
+
+type fixedSource struct{ snapshot obs.Snapshot }
+
+func (s fixedSource) Snapshot() obs.Snapshot { return s.snapshot }
 
 func TestSourcePanicIsContained(t *testing.T) {
 	handler, err := obshttp.NewHandler(panicSource{}, obshttp.Options{})
@@ -233,5 +237,28 @@ func TestConfigEndpointUsesTransportSchema(t *testing.T) {
 	body := response.Body.String()
 	if !strings.Contains(body, `"effective_config"`) || !strings.Contains(body, `"children"`) || strings.Contains(body, `"Children"`) {
 		t.Fatalf("body=%s", body)
+	}
+}
+
+func TestExplainEndpointReturnsStructuredEvidence(t *testing.T) {
+	handler, err := obshttp.NewHandler(fixedSource{snapshot: obs.Snapshot{Queues: []obs.QueueView{{Worker: "primary", Pipeline: "orders", Depth: 10, Capacity: 10, Utilization: 1}}}}, obshttp.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/explain", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d", response.Code)
+	}
+	var document struct {
+		Analysis struct {
+			Findings []obs.Finding `json:"findings"`
+		} `json:"analysis"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Analysis.Findings) != 1 || document.Analysis.Findings[0].Code != "queue_pressure" || len(document.Analysis.Findings[0].Evidence) == 0 {
+		t.Fatalf("document=%+v", document)
 	}
 }

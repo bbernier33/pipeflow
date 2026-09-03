@@ -79,6 +79,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, r, http.StatusOK, resilienceDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Recoveries: snapshot.Recoveries, Circuits: snapshot.Circuits, Idempotency: snapshot.Idempotency})
 	case "/v1/config":
 		writeJSON(w, r, http.StatusOK, configDocument{Schema: SchemaVersion, CapturedAt: snapshot.CapturedAt, Pipelines: wireDefinitions(snapshot.Definitions)})
+	case "/v1/explain":
+		analysis, err := obs.Analyze(snapshot, obs.AnalysisOptions{})
+		if err != nil {
+			writeError(w, r, http.StatusInternalServerError, "analysis_unavailable")
+			return
+		}
+		writeJSON(w, r, http.StatusOK, explainDocument{Schema: SchemaVersion, Analysis: analysis})
 	default:
 		writeError(w, r, http.StatusNotFound, "not_found")
 	}
@@ -180,6 +187,10 @@ type configDocument struct {
 	Schema     string           `json:"schema"`
 	CapturedAt time.Time        `json:"captured_at"`
 	Pipelines  []definitionWire `json:"pipelines"`
+}
+type explainDocument struct {
+	Schema   string       `json:"schema"`
+	Analysis obs.Analysis `json:"analysis"`
 }
 type definitionWire struct {
 	Name        string                 `json:"name"`

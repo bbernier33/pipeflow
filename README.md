@@ -213,6 +213,26 @@ winning configuration sources; unconfigured Pipelines expose topology with a
 nil effective configuration. This surface is observation-only and cannot
 change an active Pipeline.
 
+Derived analysis remains a pure view over a snapshot:
+
+```go
+analysis, err := obs.Analyze(collector.Snapshot(), obs.AnalysisOptions{})
+if err != nil {
+    log.Fatal(err)
+}
+if analysis.PrimaryBottleneck != nil {
+    log.Printf("%s: %s",
+        analysis.PrimaryBottleneck.Code,
+        analysis.PrimaryBottleneck.Summary)
+}
+```
+
+Findings carry stable codes, severity, structural location, and numeric
+evidence. Default rules cover queue pressure, worker saturation, concentrated
+Step time, Pipeline failure rate, Recovery activity, Circuit state, and
+Idempotency anomalies. Empty findings mean no configured threshold was crossed,
+not proof that the application is healthy.
+
 Operational history is opt-in and recorded outside execution:
 
 ```go
@@ -259,7 +279,7 @@ mux.Handle("/operations/", http.StripPrefix("/operations", handler))
 ```
 
 The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
-`/v1/queues`, `/v1/resilience`, `/v1/config`, optional `/v1/history`, and `/v1/snapshot`.
+`/v1/queues`, `/v1/resilience`, `/v1/config`, `/v1/explain`, optional `/v1/history`, and `/v1/snapshot`.
 History accepts RFC3339 `from`/`to`, `limit` (maximum 1000), and `order=asc|desc`.
 Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
@@ -270,6 +290,7 @@ TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationT
 [Resilience Operational Views](adr/ResilienceOperationalViews.md), and
 [Persistent Observation History](adr/PersistentObservationHistory.md), and
 [Effective Configuration View](adr/EffectiveConfigurationView.md), and
+[Explain and Bottleneck Analysis](adr/ExplainBottleneckAnalysis.md), and
 [Observation HTTP Transport](adr/ObservationHTTPTransport.md).
 
 ## Design Goals
