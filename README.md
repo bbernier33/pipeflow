@@ -416,11 +416,32 @@ Depth and case limits prevent accidental explosion. Generated values are
 transient; retained mutation results contain only paths, kinds, type names,
 Scenario evidence, and payload-free reports.
 
-Semantic mutation, injection, load, chaos, suites, and aggregate readiness
-verdicts remain later v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
+Semantic cases let applications classify domain-specific behavior without
+teaching Pipeflow what a UUID, identifier, timestamp, or amount means:
+
+```go
+semantics := readiness.NewSemanticPlan(scenario,
+    readiness.NewSemanticCase("UUID v4", "$.id", validV4).
+        ExpectBehavior(readiness.SemanticAccept),
+    readiness.NewSemanticCase("UUID v1", "$.id", validV1).
+        ExpectBehavior(readiness.SemanticReject).
+        Verify(rejectedForUnsupportedVersion),
+    readiness.NewSemanticCase("uppercase UUID", "$.id", uppercase),
+)
+result := semantics.Run(context.Background())
+```
+
+Unclassified cases produce `REVIEW`. Once the developer records ACCEPT or
+REJECT in ordinary Go code, later runs become deterministic regression checks.
+Optional payload-free evidence checks verify the reason for behavior so an
+unrelated failure cannot masquerade as the expected rejection.
+
+Injection, load, chaos, suites, and aggregate readiness verdicts remain later
+v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
-[Readiness Type-Aware Payload Mutation](adr/ReadinessPayloadMutation.md).
+[Readiness Type-Aware Payload Mutation](adr/ReadinessPayloadMutation.md), and
+[Readiness Semantic Mutation](adr/ReadinessSemanticMutation.md).
 
 ## Design Goals
 
