@@ -436,12 +436,35 @@ REJECT in ordinary Go code, later runs become deterministic regression checks.
 Optional payload-free evidence checks verify the reason for behavior so an
 unrelated failure cannot masquerade as the expected rejection.
 
-Injection, load, chaos, suites, and aggregate readiness verdicts remain later
-v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
+Bounded finite load plans reuse the same Scenario and Pipeline execution path:
+
+```go
+load := readiness.NewLoadPlan(scenario, readiness.LoadConfig{
+    Runs: 10_000, Concurrency: 50, StartsPerSecond: 500,
+}).
+    Inputs(func(index int) (any, error) { return event(index), nil }).
+    Expect(
+        readiness.PipelineFailureRateAtMost(0),
+        readiness.P95Within(250*time.Millisecond),
+        readiness.ThroughputAtLeast(400),
+    )
+result := load.Run(context.Background())
+```
+
+Each started run retains its complete payload-free `RunReport`; outputs are not
+retained. Aggregates distinguish Pipeline failures from Scenario failures and
+report completed runs, reviews, maximum concurrency, throughput, and
+min/mean/p50/p95/p99/max execution latency. Input factories and expectation
+panics become ordinary failed evidence. Cancellation stops submission and waits
+for already-started runs.
+
+Flow pressure, injection, chaos, suites, and aggregate readiness verdicts remain
+later v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
 [Readiness Type-Aware Payload Mutation](adr/ReadinessPayloadMutation.md), and
-[Readiness Semantic Mutation](adr/ReadinessSemanticMutation.md).
+[Readiness Semantic Mutation](adr/ReadinessSemanticMutation.md), and
+[Readiness Stress and Load Testing](adr/ReadinessStressLoad.md).
 
 ## Design Goals
 
