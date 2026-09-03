@@ -86,6 +86,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, r, http.StatusOK, explainDocument{Schema: SchemaVersion, Analysis: analysis})
+	case "/v1/dashboard":
+		analysis, err := obs.Analyze(snapshot, obs.AnalysisOptions{})
+		if err != nil {
+			writeError(w, r, http.StatusInternalServerError, "analysis_unavailable")
+			return
+		}
+		writeJSON(w, r, http.StatusOK, dashboardDocument{Schema: SchemaVersion, Snapshot: snapshotDocument(snapshot), Analysis: analysis})
 	case "/v1/resources":
 		correlations, err := obs.CorrelateResources(snapshot, obs.CorrelationOptions{})
 		if err != nil {
@@ -197,6 +204,11 @@ type configDocument struct {
 }
 type explainDocument struct {
 	Schema   string       `json:"schema"`
+	Analysis obs.Analysis `json:"analysis"`
+}
+type dashboardDocument struct {
+	Schema   string       `json:"schema"`
+	Snapshot snapshotWire `json:"snapshot"`
 	Analysis obs.Analysis `json:"analysis"`
 }
 type resourceDocument struct {

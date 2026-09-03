@@ -16,6 +16,7 @@ The transport exposes:
 - `GET` and `HEAD /v1/config` for registered topology and effective settings;
 - `GET` and `HEAD /v1/explain` for current derived findings and bottlenecks;
 - `GET` and `HEAD /v1/resources` for runtime samples and temporal correlation;
+- `GET` and `HEAD /v1/dashboard` for an atomic Snapshot plus Explain view;
 - optional `GET` and `HEAD /v1/history` for bounded persistent snapshots;
 - `GET` and `HEAD /v1/snapshot` for the complete bounded snapshot.
 
@@ -40,6 +41,6 @@ range queries. The handler never writes or prunes history.
 
 ## Deferred
 
-Streaming protocols, remote execution control, persistence, multi-process
-discovery, metrics exporters, OpenTelemetry integration, and user interfaces
-remain separate future slices.
+Streaming protocols, remote execution control, multi-process discovery,
+metrics exporters, OpenTelemetry integration, and graphical interfaces remain
+separate future slices. The read-only TUI consumes this HTTP contract.

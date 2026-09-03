@@ -300,20 +300,32 @@ mux.Handle("/operations/", http.StripPrefix("/operations", handler))
 
 The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
 `/v1/queues`, `/v1/resilience`, `/v1/config`, `/v1/explain`, `/v1/resources`,
-optional `/v1/history`, and `/v1/snapshot`.
+`/v1/dashboard`, optional `/v1/history`, and `/v1/snapshot`.
 History accepts RFC3339 `from`/`to`, `limit` (maximum 1000), and `order=asc|desc`.
 Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
 address, server lifecycle, and request logging. Persistent history,
-resilience-specific views, runtime resources, exporters, streaming, and the
-TUI remain later v2.x slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
+exporters, streaming, and multi-application aggregation remain later v2.x
+slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
 [Queue and Worker Operational Views](adr/QueueWorkerOperationalViews.md), and
 [Resilience Operational Views](adr/ResilienceOperationalViews.md), and
 [Persistent Observation History](adr/PersistentObservationHistory.md), and
 [Effective Configuration View](adr/EffectiveConfigurationView.md), and
 [Explain and Bottleneck Analysis](adr/ExplainBottleneckAnalysis.md), and
 [Runtime Resource Correlation](adr/RuntimeResourceCorrelation.md), and
+[Observation TUI](adr/ObservationTUI.md), and
 [Observation HTTP Transport](adr/ObservationHTTPTransport.md).
+
+Run the read-only terminal dashboard against a mounted Observation handler:
+
+```sh
+PIPEFLOW_OBS_TOKEN=secret go run ./cmd/pipeflow-obs \
+  -url http://127.0.0.1:8080/operations
+```
+
+Use `-once -color=false` for scripts and captured output. Interactive mode
+refreshes every two seconds by default and exits cleanly on Ctrl+C/SIGTERM.
+The TUI cannot submit work, cancel executions, or modify configuration.
 
 ## Design Goals
 
