@@ -375,9 +375,30 @@ producer. The underlying Core `InspectFlow` methods expose structured endpoints
 and Go type names without functions or payloads, so tools never need to parse
 validation error strings.
 
+Safe end-to-end verification composes contract inspection with a real Scenario:
+
+```go
+e2e := readiness.NewEndToEnd(
+    readiness.NewScenario("sample order", &pipeline).
+        WithInput(sample).
+        Expect(readiness.RunSucceeds(), outputWasCaptured),
+    readiness.SampleIngress("order fixture"),
+    readiness.SafeSink("in-memory capture"),
+)
+result := e2e.Run(context.Background())
+```
+
+The verifier rejects missing, duplicate, or unsupported boundary declarations
+and stops before execution when contract preflight fails. Its payload-free
+coverage lists every reported Pipeline, Stage, Step, Parallel, Branch, and
+Subflow path with status, duration, attempts, and error evidence. The Scenario's
+expectations remain authoritative, allowing an expected injected failure to be
+a passing end-to-end test.
+
 Mutation, injection, load, chaos, suites, and aggregate readiness verdicts
 remain later v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
-and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md).
+and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
+and [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md).
 
 ## Design Goals
 
