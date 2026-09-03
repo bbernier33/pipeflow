@@ -354,9 +354,30 @@ Every scenario declares at least one expectation. Execution failure is evidence,
 not an automatic scenario failure, because an injected failure may be precisely
 the expected behavior. Checks return `PASS`, `FAIL`, or `REVIEW`; overall
 precedence is `FAIL`, then `REVIEW`, then `PASS`. Retained results do not contain
-business output. Contract reports, mutation, injection, load, chaos, suites, and
-aggregate readiness verdicts remain later v3.x increments. See
-[Readiness Scenario Model](adr/ReadinessScenarioModel.md).
+business output.
+
+Contract and topology readiness is available before execution:
+
+```go
+contracts := readiness.InspectContractsInput(&pipeline, sample)
+for _, boundary := range contracts.Boundaries {
+    fmt.Printf("%s (%s) -> %s (%s): %s\n",
+        boundary.Producer.Name, boundary.Producer.Type,
+        boundary.Consumer.Name, boundary.Consumer.Type,
+        boundary.Status)
+}
+```
+
+Known compatible boundaries produce `PASS`, known incompatible boundaries
+produce `FAIL`, and types that cannot be established before execution produce
+`REVIEW`. Pass-through Steps preserve the identity of the value's actual
+producer. The underlying Core `InspectFlow` methods expose structured endpoints
+and Go type names without functions or payloads, so tools never need to parse
+validation error strings.
+
+Mutation, injection, load, chaos, suites, and aggregate readiness verdicts
+remain later v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
+and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md).
 
 ## Design Goals
 

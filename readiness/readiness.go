@@ -10,6 +10,8 @@ import (
 	"github.com/bbernier33/pipeflow"
 )
 
+var errNilPipeline = errors.New("readiness: pipeline cannot be nil")
+
 // Verdict is the outcome of a check or Scenario.
 type Verdict string
 
