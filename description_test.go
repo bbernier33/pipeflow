@@ -100,7 +100,7 @@ func (describedCustomItem) Run(context.Context, *Context, any) (any, error) { re
 
 func TestDescriptionContainsOnlyDefinitionData(t *testing.T) {
 	description := NewPipeline("pipeline", NewStage("stage", NewStep("step", func() error { return nil }))).Describe()
-	want := Description{Kind: DescriptionPipeline, Name: "pipeline", Children: []Description{{Kind: DescriptionStage, Name: "stage", Children: []Description{{Kind: DescriptionStep, Name: "step"}}}}}
+	want := Description{Kind: DescriptionPipeline, Name: "pipeline", Children: []Description{{Kind: DescriptionStage, Name: "stage", Children: []Description{{Kind: DescriptionStep, Name: "step", Role: StepRoleNormal}}}}}
 	if !reflect.DeepEqual(description, want) {
 		t.Fatalf("Describe = %#v, want %#v", description, want)
 	}

@@ -11,11 +11,12 @@ import (
 // Stage is a sequential group of StageItems whose final value becomes the
 // input to the next Stage.
 type Stage struct {
-	name      string
-	items     []StageItem
-	timeout   time.Duration
-	metadata  *compiledMetadataExtractor
-	configErr error
+	name       string
+	items      []StageItem
+	timeout    time.Duration
+	timeoutSet bool
+	metadata   *compiledMetadataExtractor
+	configErr  error
 }
 
 // WithResultMetadata returns a Stage that extracts small scalar reporting
@@ -32,6 +33,7 @@ func (s Stage) WithResultMetadata(extractor any) Stage {
 
 // WithTimeout returns a Stage limited by a total execution timeout.
 func (s Stage) WithTimeout(timeout time.Duration) Stage {
+	s.timeoutSet = true
 	if timeout > 0 {
 		s.timeout = timeout
 	} else {

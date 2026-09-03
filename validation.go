@@ -70,6 +70,9 @@ func validateStageItems(stage *Stage) error {
 		if step.name == "" {
 			return fmt.Errorf("pipeflow: stage %q contains a step with an empty name", stage.name)
 		}
+		if !step.role.valid() {
+			return fmt.Errorf("pipeflow: step %q has invalid role %q", step.name, step.role)
+		}
 		if _, exists := seenSteps[step.name]; exists {
 			return fmt.Errorf("pipeflow: stage %q has duplicate step name %q", stage.name, step.name)
 		}
@@ -98,6 +101,9 @@ func validateStageItems(stage *Stage) error {
 				}
 			}
 		case *Parallel:
+			if typed.configErr != nil {
+				return typed.configErr
+			}
 			if typed.name == "" {
 				return fmt.Errorf("pipeflow: stage %q contains a parallel group with an empty name", stage.name)
 			}
@@ -124,6 +130,9 @@ func validateStageItems(stage *Stage) error {
 					}
 					if step.name == "" {
 						return fmt.Errorf("pipeflow: parallel %q branch %q contains a step with an empty name", typed.name, branch.name)
+					}
+					if !step.role.valid() {
+						return fmt.Errorf("pipeflow: step %q has invalid role %q", step.name, step.role)
 					}
 					if _, exists := seenBranchSteps[step.name]; exists {
 						return fmt.Errorf("pipeflow: parallel %q branch %q has duplicate step name %q", typed.name, branch.name, step.name)

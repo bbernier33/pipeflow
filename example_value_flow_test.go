@@ -40,6 +40,67 @@ func ExamplePipeline_Run_valueFlow() {
 	// result 22
 }
 
+func ExampleStep_WithRecovery() {
+	credentialsValid := false
+	fetch := pipeflow.NewStep("fetch", func() (string, error) {
+		if !credentialsValid {
+			return "", errors.New("credentials expired")
+		}
+		return "orders", nil
+	}).WithRecovery(
+		pipeflow.NewRecoveryStage("refresh credentials",
+			pipeflow.NewStep("refresh", func(failure pipeflow.Failure) error {
+				credentialsValid = true
+				return nil
+			}),
+			pipeflow.NewStep("retry", func(pipeflow.Failure) (pipeflow.RecoveryDecision, error) {
+				return pipeflow.RecoveryRetryStep, nil
+			}),
+		),
+		pipeflow.RecoveryPolicy{MaxAttempts: 1, Timeout: time.Second},
+	)
+	pipeline := pipeflow.NewPipeline("imports", pipeflow.NewStage("load", fetch))
+	output, err := pipeline.Run(context.Background())
+	fmt.Println(output, err)
+	// Output: orders <nil>
+}
+
+func ExampleCircuitBreaker() {
+	dependencyErr := errors.New("provider unavailable")
+	breaker, _ := pipeflow.NewCircuitBreaker("orders-api", pipeflow.CircuitBreakerPolicy{
+		FailureThreshold:  3,
+		ObservationWindow: time.Minute,
+		OpenDuration:      30 * time.Second,
+		HalfOpenMaxProbes: 1,
+		IsFailure: func(err error) bool {
+			return errors.Is(err, dependencyErr)
+		},
+	})
+
+	fetch := pipeflow.NewStep("fetch", func() error {
+		return dependencyErr
+	}).WithCircuitBreaker(breaker)
+	_ = fetch
+	fmt.Println(breaker.Snapshot().State)
+	// Output: closed
+}
+
+func ExampleIdempotencyGuard() {
+	type payment struct{ ID string }
+	store := pipeflow.NewMemoryIdempotencyStore()
+	guard, _ := pipeflow.NewIdempotencyGuard("payments", store, func(value payment) string {
+		return value.ID
+	})
+	charge := pipeflow.NewStep("charge", func(value payment) error {
+		fmt.Println("charged", value.ID)
+		return nil
+	}).WithIdempotencyGuard(guard)
+	pipeline := pipeflow.NewPipeline("payments", pipeflow.NewStage("charge", charge))
+	_, _ = pipeline.Run(context.Background(), payment{ID: "pay-123"})
+	_, _ = pipeline.Run(context.Background(), payment{ID: "pay-123"})
+	// Output: charged pay-123
+}
+
 func ExamplePipeline_ValidateInput() {
 	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("process",
 		pipeflow.NewStep("validate", func(orderID int) error { return nil }),
@@ -290,6 +351,71 @@ func ExamplePipeline_WithLifecycleHook() {
 	// Output:
 	// orders process charge completed
 	// <nil>
+}
+
+func ExamplePipeline_WithObserver() {
+	pipeline := pipeflow.NewPipeline("orders",
+		pipeflow.NewStage("prepare", pipeflow.NewStep("load", func() (int, error) { return 42, nil })),
+	).WithObserver(pipeflow.ObserverFuncs{
+		Trace: func(event pipeflow.TraceEvent) {
+			if event.Scope == pipeflow.ObservationStep && event.Phase == pipeflow.ObservationCompleted {
+				fmt.Println(event.Location.Step, event.Status)
+			}
+		},
+	})
+
+	_, _ = pipeline.Run(context.Background())
+	// Output:
+	// load completed
+}
+
+func ExampleNewSourceStep() {
+	pipeline := pipeflow.NewPipeline("orders", pipeflow.NewStage("flow",
+		pipeflow.NewSourceStep("load", func() (int, error) { return 20, nil }),
+		pipeflow.NewStep("price", func(value int) (int, error) { return value + 1, nil }),
+		pipeflow.NewSinkStep("store", func(value int) error {
+			fmt.Println("stored", value)
+			return nil
+		}),
+	))
+
+	output, _ := pipeline.Run(context.Background())
+	fmt.Println("output", output)
+	// Output:
+	// stored 21
+	// output 21
+}
+
+func ExamplePipeline_StartWorker() {
+	pipeline := pipeflow.NewPipeline("double", pipeflow.NewStage("work",
+		pipeflow.NewStep("double", func(value int) (int, error) { return value * 2, nil }),
+	))
+	worker, _ := pipeline.StartWorker(context.Background(), pipeflow.WorkerOptions{Workers: 1, Buffer: 1})
+	work, _ := worker.Submit(context.Background(), 21)
+	worker.Close()
+	output, report, err := work.Wait()
+	fmt.Println(output, report.Status, err)
+	_ = worker.Wait()
+	// Output:
+	// 42 completed <nil>
+}
+
+func ExamplePipeline_StartStream() {
+	inputs := make(chan any, 2)
+	inputs <- 2
+	inputs <- 3
+	close(inputs)
+	pipeline := pipeflow.NewPipeline("square", pipeflow.NewStage("work",
+		pipeflow.NewStep("square", func(value int) (int, error) { return value * value, nil }),
+	))
+	stream, _ := pipeline.StartStream(context.Background(), inputs, pipeflow.StreamOptions{Workers: 1, Buffer: 1})
+	for result := range stream.Results() {
+		fmt.Println(result.Sequence, result.Output, result.Err)
+	}
+	_ = stream.Wait()
+	// Output:
+	// 1 4 <nil>
+	// 2 9 <nil>
 }
 
 func ExamplePipeline_Finally() {

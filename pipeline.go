@@ -9,20 +9,31 @@ import (
 )
 
 type Pipeline struct {
-	name    string
-	stages  []Stage
-	timeout time.Duration
+	name            string
+	stages          []Stage
+	timeout         time.Duration
+	timeoutSet      bool
+	effectiveConfig *EffectivePipelineConfig
 
 	onStarted   []PipelineHook
 	onCompleted []PipelineHook
 	onFailed    []PipelineHook
 	lifecycle   []LifecycleHook
+	observer    Observer
 	finalizers  []namedFinalizer
 	backgrounds []backgroundTask
 }
 
+// WithObserver returns a Pipeline that emits payload-free Metrics, Trace, and
+// Profile samples. Observer failures never change execution results.
+func (p Pipeline) WithObserver(observer Observer) Pipeline {
+	p.observer = newSerializedObserver(observer)
+	return p
+}
+
 // WithTimeout returns a Pipeline limited by a total execution timeout.
 func (p Pipeline) WithTimeout(timeout time.Duration) Pipeline {
+	p.timeoutSet = true
 	if timeout > 0 {
 		p.timeout = timeout
 	} else {
@@ -133,7 +144,7 @@ func (p *Pipeline) prepareExecution(args []any) (*Context, any, *runRecorder, er
 }
 
 func (p *Pipeline) execute(goCtx context.Context, ctx *Context, input any, recorder *runRecorder) (any, RunReport, error) {
-	dispatcher := newLifecycleDispatcher(recorder.snapshot().RunID, p.name, p.lifecycle)
+	dispatcher := newLifecycleDispatcher(recorder.snapshot().RunID, p.name, p.lifecycle, p.observer)
 	runErr := dispatcher.emit(PipelineStarted, "", "", StatusRunning, nil)
 	if hookErr := p.runStartedHooks(PipelineEvent{
 		Name:    p.name,

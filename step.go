@@ -21,18 +21,28 @@ const (
 // Step adapts one supported ordinary Go function into a value-flow execution
 // unit.
 type Step struct {
-	name        string
-	action      func(context.Context, *Context, any) (any, error)
-	retryPolicy *RetryPolicy
-	inputType   reflect.Type
-	outputType  reflect.Type
-	flow        stepFlow
-	configErr   error
-	timeout     time.Duration
-	pollPolicy  *compiledPollPolicy
-	condition   *compiledCondition
-	rateLimit   *RateLimitPolicy
-	metadata    *compiledMetadataExtractor
+	name           string
+	role           StepRole
+	roleSet        bool
+	action         func(context.Context, *Context, any) (any, error)
+	retryPolicy    *RetryPolicy
+	inputType      reflect.Type
+	outputType     reflect.Type
+	flow           stepFlow
+	configErr      error
+	timeout        time.Duration
+	timeoutSet     bool
+	retrySet       bool
+	pollingSet     bool
+	rateLimitSet   bool
+	pollPolicy     *compiledPollPolicy
+	condition      *compiledCondition
+	rateLimit      *RateLimitPolicy
+	metadata       *compiledMetadataExtractor
+	recovery       *RecoveryStage
+	recoveryPolicy RecoveryPolicy
+	circuit        *CircuitBreaker
+	idempotency    *IdempotencyGuard
 }
 
 // NewStep creates a Step from a supported ordinary Go function and options.
@@ -41,8 +51,12 @@ func NewStep(
 	action any,
 	options ...StepOption,
 ) *Step {
+	return newStep(name, action, StepRoleNormal, false, options...)
+}
+
+func newStep(name string, action any, role StepRole, roleSet bool, options ...StepOption) *Step {
 	step := &Step{
-		name: name,
+		name: name, role: role, roleSet: roleSet,
 	}
 	step.action, step.inputType, step.outputType, step.flow, step.configErr = adaptStepAction(name, action)
 
@@ -60,11 +74,6 @@ func (s *Step) Run(goCtx context.Context, ctx *Context, input any) (any, error) 
 
 func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *runRecorder, reportPath stepReportPath, lifecycle *lifecycleDispatcher, stageName, parallelName, branchName string) (output any, err error) {
 	skipped := false
-	if s.timeout > 0 {
-		var cancel context.CancelFunc
-		goCtx, cancel = context.WithTimeout(goCtx, s.timeout)
-		defer cancel()
-	}
 	if recorder != nil {
 		recorder.startStep(reportPath)
 		defer func() {
@@ -73,9 +82,9 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 			}
 			var hookErr error
 			if err != nil {
-				hookErr = lifecycle.emitLocated(StepFailed, stageName, parallelName, branchName, s.name, statusForError(err), err)
+				hookErr = lifecycle.emitStep(StepFailed, stageName, parallelName, branchName, s.name, s.Role(), statusForError(err), err)
 			} else {
-				hookErr = lifecycle.emitLocated(StepCompleted, stageName, parallelName, branchName, s.name, StatusCompleted, nil)
+				hookErr = lifecycle.emitStep(StepCompleted, stageName, parallelName, branchName, s.name, s.Role(), StatusCompleted, nil)
 			}
 			if hookErr != nil {
 				hookErr = annotateExecutionError(hookErr, "", "", s.name, 0)
@@ -101,7 +110,7 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		}
 		if !shouldRun {
 			if recorder != nil {
-				if hookErr := lifecycle.emitLocated(StepSkipped, stageName, parallelName, branchName, s.name, StatusSkipped, nil); hookErr != nil {
+				if hookErr := lifecycle.emitStep(StepSkipped, stageName, parallelName, branchName, s.name, s.Role(), StatusSkipped, nil); hookErr != nil {
 					return nil, annotateExecutionError(hookErr, "", "", s.name, 0)
 				}
 				recorder.skipStep(reportPath)
@@ -112,7 +121,7 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		}
 	}
 	if recorder != nil {
-		if hookErr := lifecycle.emitLocated(StepStarted, stageName, parallelName, branchName, s.name, StatusRunning, nil); hookErr != nil {
+		if hookErr := lifecycle.emitStep(StepStarted, stageName, parallelName, branchName, s.name, s.Role(), StatusRunning, nil); hookErr != nil {
 			return nil, annotateExecutionError(hookErr, "", "", s.name, 0)
 		}
 	}
@@ -120,8 +129,144 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		return nil, annotateExecutionError(fmt.Errorf("input: %w", err), "", "", s.name, 0)
 	}
 	ctx.Logger().Info("Running step: " + s.name)
+	if s.idempotency != nil {
+		key, keyErr := s.idempotency.key.extract(input)
+		if keyErr != nil {
+			return nil, annotateExecutionError(keyErr, "", "", s.name, 0)
+		}
+		claim, claimErr := s.idempotency.store.Claim(goCtx, s.idempotency.storageKey(key))
+		if claimErr != nil {
+			lifecycle.emitOperational(ObservationIdempotency, stageName, parallelName, branchName, s.name, s.Role(), ObservationFailed, StatusFailed, claimErr, func(location *ObservationLocation) {
+				location.Guard, location.IdempotencyOutcome = s.idempotency.name, IdempotencyStoreFailure
+			})
+			return nil, annotateExecutionError(claimErr, "", "", s.name, 0)
+		}
+		switch claim {
+		case IdempotencyCompleted:
+			lifecycle.emitOperational(ObservationIdempotency, stageName, parallelName, branchName, s.name, s.Role(), ObservationSkipped, StatusSkipped, nil, func(location *ObservationLocation) {
+				location.Guard, location.IdempotencyOutcome = s.idempotency.name, IdempotencyDuplicateCompleted
+			})
+			if recorder != nil {
+				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Outcome: IdempotencyDuplicateCompleted})
+				recorder.skipStep(reportPath)
+			}
+			if recorder != nil {
+				if hookErr := lifecycle.emitStep(StepSkipped, stageName, parallelName, branchName, s.name, s.Role(), StatusSkipped, nil); hookErr != nil {
+					return nil, annotateExecutionError(hookErr, "", "", s.name, 0)
+				}
+			}
+			skipped = true
+			return input, nil
+		case IdempotencyInProgress:
+			duplicateErr := &IdempotencyInProgressError{Guard: s.idempotency.name}
+			lifecycle.emitOperational(ObservationIdempotency, stageName, parallelName, branchName, s.name, s.Role(), ObservationFailed, StatusFailed, duplicateErr, func(location *ObservationLocation) {
+				location.Guard, location.IdempotencyOutcome = s.idempotency.name, IdempotencyDuplicateInProgress
+			})
+			if recorder != nil {
+				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Outcome: IdempotencyDuplicateInProgress})
+			}
+			return nil, annotateExecutionError(duplicateErr, "", "", s.name, 0)
+		case IdempotencyClaimed:
+			if recorder != nil {
+				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Claim: IdempotencyClaimed})
+			}
+		default:
+			return nil, annotateExecutionError(fmt.Errorf("pipeflow: idempotency guard %q store returned invalid claim state %q", s.idempotency.name, claim), "", "", s.name, 0)
+		}
+		defer func() {
+			outcome := IdempotencyExecuted
+			var storeErr error
+			if err == nil {
+				storeErr = s.idempotency.store.Complete(goCtx, s.idempotency.storageKey(key))
+			} else {
+				outcome = IdempotencyFailedReleasable
+				storeErr = s.idempotency.store.Release(context.WithoutCancel(goCtx), s.idempotency.storageKey(key))
+			}
+			if storeErr != nil {
+				outcome = IdempotencyStoreFailure
+			}
+			if recorder != nil {
+				recorder.setIdempotency(reportPath, IdempotencyReport{Guard: s.idempotency.name, Claim: IdempotencyClaimed, Outcome: outcome, Error: storeErr})
+			}
+			phase, status := ObservationCompleted, StatusCompleted
+			if outcome == IdempotencyFailedReleasable || outcome == IdempotencyStoreFailure {
+				phase, status = ObservationFailed, StatusFailed
+			}
+			lifecycle.emitOperational(ObservationIdempotency, stageName, parallelName, branchName, s.name, s.Role(), phase, status, storeErr, func(location *ObservationLocation) {
+				location.Guard, location.IdempotencyOutcome = s.idempotency.name, outcome
+			})
+			if storeErr != nil {
+				output = nil
+				err = errors.Join(err, annotateExecutionError(storeErr, "", "", s.name, 0))
+			}
+		}()
+	}
+	var permit circuitPermit
+	if s.circuit != nil {
+		var circuitErr error
+		permit, circuitErr = s.circuit.acquire(time.Now())
+		if circuitErr != nil {
+			state := s.circuit.Snapshot().State
+			lifecycle.emitOperational(ObservationCircuit, stageName, parallelName, branchName, s.name, s.Role(), ObservationSkipped, StatusFailed, circuitErr, func(location *ObservationLocation) {
+				location.Dependency, location.CircuitState, location.ShortCircuited = s.circuit.name, state, true
+			})
+			if recorder != nil {
+				recorder.setCircuit(reportPath, CircuitReport{Dependency: s.circuit.name, StateBefore: s.circuit.Snapshot().State, StateAfter: s.circuit.Snapshot().State, ShortCircuited: true})
+			}
+			return nil, annotateExecutionError(circuitErr, "", "", s.name, 0)
+		}
+		defer func() {
+			after, predicateErr := permit.finish(err)
+			phase, status := ObservationCompleted, StatusCompleted
+			if err != nil || predicateErr != nil {
+				phase, status = ObservationFailed, StatusFailed
+			}
+			lifecycle.emitOperational(ObservationCircuit, stageName, parallelName, branchName, s.name, s.Role(), phase, status, errors.Join(err, predicateErr), func(location *ObservationLocation) {
+				location.Dependency, location.CircuitState, location.Probe = s.circuit.name, after.State, permit.probe
+			})
+			if recorder != nil {
+				recorder.setCircuit(reportPath, CircuitReport{Dependency: s.circuit.name, StateBefore: permit.before.State, StateAfter: after.State, Probe: permit.probe})
+			}
+			if predicateErr != nil {
+				output = nil
+				err = errors.Join(err, annotateExecutionError(predicateErr, "", "", s.name, 0))
+			}
+		}()
+	}
+	for recoveryAttempt := 0; ; recoveryAttempt++ {
+		normalCtx := goCtx
+		cancel := func() {}
+		if s.timeout > 0 {
+			normalCtx, cancel = context.WithTimeout(goCtx, s.timeout)
+		}
+		output, err = s.runNormal(normalCtx, ctx, input, recorder, reportPath, lifecycle, stageName, parallelName, branchName)
+		cancel()
+		if err == nil || s.recovery == nil {
+			return output, err
+		}
+		if parentErr := goCtx.Err(); parentErr != nil {
+			return nil, annotateExecutionError(parentErr, "", "", s.name, recoveryAttemptNumber(err))
+		}
+		if recoveryAttempt >= s.recoveryPolicy.MaxAttempts {
+			return nil, &RecoveryError{Stage: stageName, Step: s.name, Recovery: s.recovery.name, Attempt: recoveryAttempt, Decision: RecoveryFailStep, Original: err}
+		}
+		runID, pipeline := "", ""
+		if recorder != nil {
+			runID, pipeline = recorder.runIdentity()
+		}
+		failure := Failure{Err: err, RunID: runID, Pipeline: pipeline, Stage: stageName, Step: s.name, Attempt: recoveryAttemptNumber(err)}
+		decision, recoveryErr := s.runRecovery(goCtx, ctx, failure, recorder, reportPath, lifecycle, recoveryAttempt+1)
+		if recoveryErr != nil || decision != RecoveryRetryStep {
+			return nil, &RecoveryError{Pipeline: pipeline, Stage: stageName, Step: s.name, Recovery: s.recovery.name, Attempt: recoveryAttempt + 1, Decision: decision, Original: err, RecoveryErr: recoveryErr}
+		}
+	}
+}
+
+func recoveryAttemptNumber(err error) int { return recoveryAttempt(err) }
+
+func (s *Step) runNormal(goCtx context.Context, ctx *Context, input any, recorder *runRecorder, reportPath stepReportPath, lifecycle *lifecycleDispatcher, stageName, parallelName, branchName string) (output any, err error) {
 	if s.pollPolicy == nil {
-		output, err = s.runAttempts(goCtx, ctx, input, recorder, reportPath, 0)
+		output, err = s.runAttempts(goCtx, ctx, input, recorder, reportPath, 0, lifecycle, stageName, parallelName, branchName)
 		if err == nil {
 			err = s.recordMetadata(output, recorder, reportPath)
 		}
@@ -142,7 +287,7 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 		if recorder != nil {
 			recorder.startPoll(reportPath, poll)
 		}
-		output, err = s.runAttempts(pollCtx, ctx, input, recorder, reportPath, poll)
+		output, err = s.runAttempts(pollCtx, ctx, input, recorder, reportPath, poll, lifecycle, stageName, parallelName, branchName)
 		if err != nil {
 			err = annotateExecutionPoll(err, poll)
 			if recorder != nil {
@@ -202,6 +347,19 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 func (s *Step) validateFlow(current reflect.Type, known bool) (reflect.Type, bool, error) {
 	if s.configErr != nil {
 		return nil, false, s.configErr
+	}
+	if s.recovery != nil {
+		if err := s.recovery.validate(); err != nil {
+			return nil, false, err
+		}
+	}
+	if s.idempotency != nil {
+		if s.flow != flowPreserve {
+			return nil, false, fmt.Errorf("step %q idempotency guard requires a pass-through function", s.name)
+		}
+		if s.idempotency.key.inputType != nil && known && (current == nil || !current.AssignableTo(s.idempotency.key.inputType)) && !(current == nil && isNilable(s.idempotency.key.inputType)) {
+			return nil, false, fmt.Errorf("step %q idempotency key expects %s but previous output is %s", s.name, s.idempotency.key.inputType, typeName(current))
+		}
 	}
 	if s.condition != nil && s.condition.predicateType != nil && known && (current == nil || !current.AssignableTo(s.condition.predicateType)) && !(current == nil && isNilable(s.condition.predicateType)) {
 		return nil, false, fmt.Errorf("step %q condition expects %s but previous output is %s", s.name, s.condition.predicateType, typeName(current))
@@ -268,7 +426,7 @@ func (s *Step) recordMetadata(output any, recorder *runRecorder, path stepReport
 	return nil
 }
 
-func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recorder *runRecorder, reportPath stepReportPath, poll int) (any, error) {
+func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recorder *runRecorder, reportPath stepReportPath, poll int, lifecycle *lifecycleDispatcher, stageName, parallelName, branchName string) (any, error) {
 
 	policy := RetryPolicy{MaxAttempts: 1}
 	if s.retryPolicy != nil {
@@ -283,12 +441,14 @@ func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recor
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 		if recorder != nil {
 			recorder.startAttempt(reportPath, poll, attempt)
+			lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, s.Role(), poll, attempt, ObservationStarted, StatusRunning, nil)
 		}
 		select {
 		case <-goCtx.Done():
 			err := annotateExecutionError(goCtx.Err(), "", "", s.name, attempt)
 			if recorder != nil {
 				recorder.finishAttempt(reportPath, poll, attempt, err)
+				lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, s.Role(), poll, attempt, ObservationFailed, statusForError(err), err)
 			}
 			return nil, err
 		default:
@@ -321,6 +481,11 @@ func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recor
 		}
 		if recorder != nil {
 			recorder.finishAttempt(reportPath, poll, attempt, err)
+			phase := ObservationCompleted
+			if err != nil {
+				phase = ObservationFailed
+			}
+			lifecycle.emitAttempt(stageName, parallelName, branchName, s.name, s.Role(), poll, attempt, phase, statusForError(err), err)
 		}
 
 		if err == nil {

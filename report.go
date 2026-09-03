@@ -88,15 +88,48 @@ type BranchReport struct {
 }
 
 type StepReport struct {
-	Name      string
-	Status    Status
-	StartedAt time.Time
-	EndedAt   time.Time
-	Duration  time.Duration
-	Attempts  []AttemptReport
-	Polls     []PollReport
-	Error     error
-	Metadata  ResultMetadata
+	Name        string
+	Role        StepRole
+	Status      Status
+	StartedAt   time.Time
+	EndedAt     time.Time
+	Duration    time.Duration
+	Attempts    []AttemptReport
+	Polls       []PollReport
+	Error       error
+	Metadata    ResultMetadata
+	Recoveries  []RecoveryReport
+	Circuit     *CircuitReport
+	Idempotency *IdempotencyReport
+}
+
+type IdempotencyReport struct {
+	Guard   string
+	Claim   IdempotencyClaimState
+	Outcome IdempotencyOutcome
+	Error   error
+}
+
+type CircuitReport struct {
+	Dependency     string
+	StateBefore    CircuitState
+	StateAfter     CircuitState
+	Probe          bool
+	ShortCircuited bool
+}
+
+// RecoveryReport contains control-only recovery facts and nested execution reports.
+type RecoveryReport struct {
+	Name          string
+	Attempt       int
+	Decision      RecoveryDecision
+	Status        Status
+	StartedAt     time.Time
+	EndedAt       time.Time
+	Duration      time.Duration
+	Stages        []StageReport
+	OriginalError error
+	Error         error
 }
 
 type PollReport struct {
@@ -157,17 +190,17 @@ func buildStageReports(stages []Stage) []StageReport {
 		for _, item := range stage.items {
 			switch typed := item.(type) {
 			case *Step:
-				stageReport.Steps = append(stageReport.Steps, StepReport{Name: typed.name, Status: StatusPending})
+				stageReport.Steps = append(stageReport.Steps, StepReport{Name: typed.name, Role: typed.Role(), Status: StatusPending})
 			case *ConcurrentSteps:
 				for _, step := range typed.steps {
-					stageReport.Steps = append(stageReport.Steps, StepReport{Name: step.name, Status: StatusPending})
+					stageReport.Steps = append(stageReport.Steps, StepReport{Name: step.name, Role: step.Role(), Status: StatusPending})
 				}
 			case *Parallel:
 				parallelReport := ParallelReport{Name: typed.name, Status: StatusPending}
 				for _, branch := range typed.branches {
 					branchReport := BranchReport{Name: branch.name, Status: StatusPending}
 					for _, step := range branch.steps {
-						branchReport.Steps = append(branchReport.Steps, StepReport{Name: step.name, Status: StatusPending})
+						branchReport.Steps = append(branchReport.Steps, StepReport{Name: step.name, Role: step.Role(), Status: StatusPending})
 					}
 					parallelReport.Branches = append(parallelReport.Branches, branchReport)
 				}
@@ -447,6 +480,26 @@ func (r *runRecorder) setStepMetadata(path stepReportPath, metadata ResultMetada
 	r.stepReport(path).Metadata = metadata
 }
 
+func (r *runRecorder) appendRecovery(path stepReportPath, recovery RecoveryReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	recovery.Duration = recovery.EndedAt.Sub(recovery.StartedAt)
+	report := r.stepReport(path)
+	report.Recoveries = append(report.Recoveries, recovery)
+}
+
+func (r *runRecorder) setCircuit(path stepReportPath, circuit CircuitReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stepReport(path).Circuit = &circuit
+}
+
+func (r *runRecorder) setIdempotency(path stepReportPath, report IdempotencyReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stepReport(path).Idempotency = &report
+}
+
 func (r *runRecorder) startPoll(path stepReportPath, poll int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -521,6 +574,7 @@ func (r *runRecorder) snapshot() RunReport {
 			result.Stages[i].Steps[j] = step
 			result.Stages[i].Steps[j].Metadata = cloneResultMetadata(step.Metadata)
 			result.Stages[i].Steps[j].Attempts = append([]AttemptReport(nil), step.Attempts...)
+			result.Stages[i].Steps[j].Recoveries = cloneRecoveryReports(step.Recoveries)
 			result.Stages[i].Steps[j].Polls = make([]PollReport, len(step.Polls))
 			for k, poll := range step.Polls {
 				result.Stages[i].Steps[j].Polls[k] = poll
@@ -557,6 +611,19 @@ func (r *runRecorder) snapshot() RunReport {
 	return result
 }
 
+func cloneRecoveryReports(recoveries []RecoveryReport) []RecoveryReport {
+	result := make([]RecoveryReport, len(recoveries))
+	for i, recovery := range recoveries {
+		result[i] = recovery
+		result[i].Stages = cloneStageReports(recovery.Stages)
+	}
+	return result
+}
+
+func cloneStageReports(stages []StageReport) []StageReport {
+	return cloneSubflowReport(SubflowReport{Stages: stages}).Stages
+}
+
 func cloneSubflowReport(subflow SubflowReport) SubflowReport {
 	result := subflow
 	result.Stages = make([]StageReport, len(subflow.Stages))
@@ -591,6 +658,15 @@ func cloneStepReport(step StepReport) StepReport {
 	result := step
 	result.Metadata = cloneResultMetadata(step.Metadata)
 	result.Attempts = append([]AttemptReport(nil), step.Attempts...)
+	result.Recoveries = cloneRecoveryReports(step.Recoveries)
+	if step.Circuit != nil {
+		circuit := *step.Circuit
+		result.Circuit = &circuit
+	}
+	if step.Idempotency != nil {
+		report := *step.Idempotency
+		result.Idempotency = &report
+	}
 	result.Polls = make([]PollReport, len(step.Polls))
 	for i, poll := range step.Polls {
 		result.Polls[i] = poll

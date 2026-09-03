@@ -8,6 +8,9 @@ Pipeflow Core v1.0 is stable and intended for reuse across backend services,
 data processing, IoT, realtime applications, game backends, and other Go
 workloads.
 
+Development toward v2 has started with opt-in Operational Recovery. The v1 API
+remains frozen; v2 work is additive and unreleased.
+
 ## Project Status
 
 Pipeflow Core v1.0.0 is released. Its public execution API and documented
@@ -66,6 +69,263 @@ Without a shared execution layer, projects repeatedly implement:
 - observability hooks
 
 Pipeflow aims to provide these capabilities as reusable Go primitives so applications can focus on their domain logic.
+
+## Operational Recovery (v2 development)
+
+Operational Recovery runs only after a Step's normal retry/polling behavior is
+exhausted. It receives failure metadata, repairs execution conditions, and
+returns an explicit control decision. It never replaces the flowing business
+value.
+
+```go
+fetch := pipeflow.NewStep("fetch", fetchOrders).WithRecovery(
+    pipeflow.NewRecoveryStage("refresh credentials",
+        pipeflow.NewStep("refresh", func(f pipeflow.Failure) error {
+            return refreshCredentials(f.Err)
+        }),
+        pipeflow.NewStep("decide", func(pipeflow.Failure) (pipeflow.RecoveryDecision, error) {
+            return pipeflow.RecoveryRetryStep, nil
+        }),
+    ),
+    pipeflow.RecoveryPolicy{MaxAttempts: 1, Timeout: 30 * time.Second},
+)
+```
+
+Recovery is bounded and run-scoped. Concurrent recoveries do not single-flight;
+shared application state must use normal Go synchronization. See
+[Operational Recovery](adr/OperationalRecovery.md).
+
+### Circuit Breaker / Dependency Guard
+
+Share an explicit breaker wherever Steps call the same logical dependency:
+
+```go
+provider, err := pipeflow.NewCircuitBreaker("orders-api", pipeflow.CircuitBreakerPolicy{
+    FailureThreshold:  5,
+    ObservationWindow: time.Minute,
+    OpenDuration:      30 * time.Second,
+    HalfOpenMaxProbes: 1,
+    IsFailure: func(err error) bool {
+        return errors.Is(err, ErrProviderUnavailable)
+    },
+})
+
+fetch.WithCircuitBreaker(provider)
+update.WithCircuitBreaker(provider)
+```
+
+The predicate is required: Pipeflow never assumes ordinary business errors
+mean that a dependency is unhealthy. `provider.Snapshot()` exposes read-only
+live state, and each protected Step records a payload-free circuit report. See
+[Circuit Breaker](adr/CircuitBreaker.md).
+
+### Idempotency Guard
+
+Idempotency Guard prevents a completed side effect from being repeated when
+the application supplies a stable key and an atomic store:
+
+```go
+guard, err := pipeflow.NewIdempotencyGuard(
+    "payments",
+    paymentStore,
+    func(payment Payment) string { return payment.ID },
+)
+
+charge := pipeflow.NewStep("charge", func(payment Payment) error {
+    return gateway.Charge(payment)
+}).WithIdempotencyGuard(guard)
+```
+
+Guarded Steps must be pass-through functions. A duplicate-completed execution
+is skipped and its input continues flowing. One claim surrounds retries and
+Recovery. The built-in memory store is process-local; durable or distributed
+guarantees come from application-provided stores. Pipeflow does not promise
+exactly-once execution. See [Idempotency Guard](adr/IdempotencyGuard.md).
+
+## Observation / Operations Tool (v2.x development)
+
+The separate `obs` package consumes Pipeflow telemetry without participating
+in execution:
+
+```go
+collector := obs.NewCollector(obs.Options{
+    TraceCapacity:    5_000,
+    RunCapacity:      500,
+    ResourceCapacity: 1_000,
+})
+
+pipeline = pipeline.WithObserver(collector)
+snapshot := collector.Snapshot()
+```
+
+Long-lived Core workers can be added explicitly to the same read-only view:
+
+```go
+worker, err := pipeline.StartWorker(ctx, pipeflow.WorkerOptions{
+    Workers: 4,
+    Buffer:  100,
+})
+if err != nil {
+    log.Fatal(err)
+}
+untrack, err := collector.TrackWorker("orders-primary", worker)
+if err != nil {
+    log.Fatal(err)
+}
+defer untrack()
+```
+
+`Snapshot().Workers` reports status, concurrency, active/in-flight work, and
+outcome counters. `Snapshot().Queues` reports depth, capacity, utilization,
+and max-in-flight state. These views contain no queued values and provide no
+control over the Worker.
+
+Resilience telemetry is also derived automatically from observed executions:
+
+```go
+snapshot := collector.Snapshot()
+for _, circuit := range snapshot.Circuits {
+    log.Printf("dependency=%s state=%s short_circuits=%d",
+        circuit.Dependency, circuit.State, circuit.ShortCircuits)
+}
+```
+
+`Snapshot().Recoveries` summarizes activations, failures, and decisions;
+`Snapshot().Circuits` summarizes dependency state, failures, probes, and
+short-circuits; `Snapshot().Idempotency` summarizes executions, duplicates,
+releasable failures, and store failures. Stable keys and business values are
+never emitted.
+
+Pipeline topology and resolved execution policy can be registered explicitly:
+
+```go
+untrackPipeline, err := collector.TrackPipeline(configuredPipeline)
+if err != nil {
+    log.Fatal(err)
+}
+defer untrackPipeline()
+
+definition := collector.Snapshot().Definitions[0]
+```
+
+Each definition contains the callback-free `Describe()` tree. Pipelines built
+with `WithConfig` also contain their detached `EffectiveConfig()` values and
+winning configuration sources; unconfigured Pipelines expose topology with a
+nil effective configuration. This surface is observation-only and cannot
+change an active Pipeline.
+
+Derived analysis remains a pure view over a snapshot:
+
+```go
+analysis, err := obs.Analyze(collector.Snapshot(), obs.AnalysisOptions{})
+if err != nil {
+    log.Fatal(err)
+}
+if analysis.PrimaryBottleneck != nil {
+    log.Printf("%s: %s",
+        analysis.PrimaryBottleneck.Code,
+        analysis.PrimaryBottleneck.Summary)
+}
+```
+
+Findings carry stable codes, severity, structural location, and numeric
+evidence. Default rules cover queue pressure, worker saturation, concentrated
+Step time, Pipeline failure rate, Recovery activity, Circuit state, and
+Idempotency anomalies. Empty findings mean no configured threshold was crossed,
+not proof that the application is healthy.
+
+Runtime correlation is explicit and caller-scheduled:
+
+```go
+// Call from an application-owned ticker or at an incident boundary.
+sample := collector.CaptureRuntime()
+
+correlations, err := obs.CorrelateResources(
+    collector.Snapshot(),
+    obs.CorrelationOptions{MaxSampleAge: 30 * time.Second},
+)
+```
+
+The standard sample includes heap/allocation counters, goroutines, cgo calls,
+stack use, and GC activity. `RecordResource` accepts equivalent samples from
+external process/system samplers. Correlation associates each execution event
+with its latest preceding fresh sample; it describes timing, not causation.
+Pipeflow does not invent process CPU percentages unavailable from Go's standard
+library.
+
+Operational history is opt-in and recorded outside execution:
+
+```go
+store, err := history.Open("./pipeflow-history", history.Options{
+    MaxSnapshots: 10_000,
+    MaxAge:       7 * 24 * time.Hour,
+    Sync:         true,
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+// The application chooses the recording interval or incident boundaries.
+if err := store.Append(collector.Snapshot()); err != nil {
+    log.Printf("record observation history: %v", err)
+}
+```
+
+Records are immutable, versioned, payload-free snapshot files. Writes use a
+temporary file and atomic rename; count/age retention is explicit. The store
+has no background goroutine and is never an execution dependency.
+
+The initial in-process collector provides bounded recent telemetry, run and
+pipeline views, explainable basic health, structurally grouped error classes,
+metric aggregates, and profile totals. Snapshots are detached and read-only;
+the collector never receives business payloads or error messages.
+
+An optional standard-library HTTP transport exposes those snapshots without
+giving the transport control over execution:
+
+```go
+handler, err := obshttp.NewHandler(collector, obshttp.Options{
+    Authorize: func(r *http.Request) bool {
+        return r.Header.Get("Authorization") == "Bearer "+token
+    },
+    History: store,
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+// Mount handler in the application's existing HTTP server.
+mux.Handle("/operations/", http.StripPrefix("/operations", handler))
+```
+
+The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
+`/v1/queues`, `/v1/resilience`, `/v1/config`, `/v1/explain`, `/v1/resources`,
+`/v1/dashboard`, optional `/v1/history`, and `/v1/snapshot`.
+History accepts RFC3339 `from`/`to`, `limit` (maximum 1000), and `order=asc|desc`.
+Responses are versioned, payload-free JSON with caching
+disabled. The embedding application owns authentication policy, TLS, bind
+address, server lifecycle, and request logging. Persistent history,
+exporters, streaming, and multi-application aggregation remain later v2.x
+slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
+[Queue and Worker Operational Views](adr/QueueWorkerOperationalViews.md), and
+[Resilience Operational Views](adr/ResilienceOperationalViews.md), and
+[Persistent Observation History](adr/PersistentObservationHistory.md), and
+[Effective Configuration View](adr/EffectiveConfigurationView.md), and
+[Explain and Bottleneck Analysis](adr/ExplainBottleneckAnalysis.md), and
+[Runtime Resource Correlation](adr/RuntimeResourceCorrelation.md), and
+[Observation TUI](adr/ObservationTUI.md), and
+[Observation HTTP Transport](adr/ObservationHTTPTransport.md).
+
+Run the read-only terminal dashboard against a mounted Observation handler:
+
+```sh
+PIPEFLOW_OBS_TOKEN=secret go run ./cmd/pipeflow-obs \
+  -url http://127.0.0.1:8080/operations
+```
+
+Use `-once -color=false` for scripts and captured output. Interactive mode
+refreshes every two seconds by default and exits cleanly on Ctrl+C/SIGTERM.
+The TUI cannot submit work, cancel executions, or modify configuration.
 
 ## Design Goals
 
@@ -1280,6 +1540,136 @@ Core v1 is complete: future compatible v1 releases may add APIs, while breaking
 changes require a new major version. Streaming, transport adapters, ETL, AI,
 and other domain capabilities can build around the frozen Core rather than
 expanding its execution model.
+
+## V1.1 Configuration
+
+V1.1 adds an optional, immutable configuration layer
+for existing execution policies. Zero-configuration Go remains unchanged, and
+explicit Go options always win:
+
+```go
+cfg, err := pipeflow.ParseConfigYAML(data)
+if err != nil {
+    return err
+}
+
+configured, err := pipeline.WithConfig(cfg)
+if err != nil {
+    return err
+}
+
+effective, _ := configured.EffectiveConfig()
+```
+
+```yaml
+defaults:
+  step:
+    retry:
+      max_attempts: 3
+      backoff: exponential
+pipelines:
+  orders:
+    timeout: 30s
+    stages:
+      process:
+        steps:
+          charge:
+            timeout: 5s
+```
+
+The schema covers Pipeline/Stage timeouts; Step timeout, retry, polling schedule,
+and rate limiting; Parallel failure policy; and Background failure policy.
+Nested Subflows and Parallel Branches use explicit paths. Conditions and
+polling predicates remain Go code—use `WithPollPredicate` when YAML owns the
+polling schedule. See [ADR-032](adr/ConfigurationFoundation.md).
+
+## Observation (v1.2)
+
+Attach an observer when an application needs structured in-process telemetry:
+
+```go
+pipeline = pipeline.WithObserver(pipeflow.ObserverFuncs{
+    Trace: func(event pipeflow.TraceEvent) {
+        // Timestamped Pipeline/Stage/Step/Attempt execution path.
+    },
+    Metric: func(sample pipeflow.MetricSample) {
+        // Raw execution counts and durations; aggregate in the consumer.
+    },
+    Profile: func(sample pipeflow.ProfileSample) {
+        // Elapsed time attributed to an execution location.
+    },
+})
+```
+
+Observation is off by default and contains no flowing business values or error
+messages. Observer panics are isolated from execution, callbacks are serialized,
+and consumers should return promptly. Transports, exporters, persistence,
+dashboards, health/history views, and runtime sampling remain outside Core. See
+[ADR-033](adr/ObservationContract.md).
+
+## Source and Sink Steps (v1.3)
+
+Source and Sink roles make application boundaries explicit while retaining the
+same Step engine and ordinary function signatures:
+
+```go
+pipeline := pipeflow.NewPipeline("orders",
+    pipeflow.NewStage("flow",
+        pipeflow.NewSourceStep("load", loadOrder),
+        pipeflow.NewStep("price", priceOrder),
+        pipeflow.NewSinkStep("store", storeInvoice),
+    ),
+)
+```
+
+`StepRoleNormal`, `StepRoleSource`, and `StepRoleSink` appear in descriptions,
+reports, live state, lifecycle events, observation data, and effective YAML
+configuration. Roles do not change value flow: a `func(T) error` Sink remains a
+pass-through Step.
+
+Queue buffering, batching, workers, backpressure, ordering, and drain semantics
+begin with Worker/Stream execution in v1.4, where a runtime actually owns
+multiple values. v1.3 intentionally adds no inert buffer settings and no visible
+QueueStep. See [ADR-034](adr/StepRoles.md).
+
+## Worker and Stream Runtime (v1.4)
+
+Run the same finite Pipeline repeatedly without changing its Step functions:
+
+```go
+worker, err := pipeline.StartWorker(ctx, pipeflow.WorkerOptions{
+    Workers:     4,
+    Buffer:      100,
+    MaxInFlight: 104,
+})
+
+work, err := worker.Submit(ctx, input)
+output, report, err := work.Wait()
+
+worker.Close() // stop intake and drain accepted work
+err = worker.Wait()
+```
+
+Or connect an application/adapter input channel as a continuous Stream:
+
+```go
+stream, err := pipeline.StartStream(ctx, inputs, pipeflow.StreamOptions{
+    Workers:       4,
+    Buffer:        100,
+    MaxInFlight:   104,
+    FailurePolicy: pipeflow.StreamContinue,
+})
+
+for result := range stream.Results() {
+    // result.Output, result.Report, result.Err
+}
+```
+
+Queues are bounded and block upstream when full. Worker run failures and Stream
+item failures are isolated; Streams continue by default. `Close` drains,
+`Cancel` stops immediately, one Stream worker preserves order, and concurrent
+workers emit completion order. Runtime queues are memory-only and provide no
+durability or exactly-once guarantee. See [ADR-035](adr/WorkerStreamRuntime.md).
 
 ## Long-Term Direction
 

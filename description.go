@@ -26,6 +26,7 @@ type Description struct {
 	Kind     DescriptionKind
 	Name     string
 	Type     string
+	Role     StepRole
 	Children []Description
 }
 
@@ -84,7 +85,7 @@ func describeStep(step *Step) Description {
 	if step == nil {
 		return Description{Kind: DescriptionInvalidItem, Type: "*pipeflow.Step"}
 	}
-	return Description{Kind: DescriptionStep, Name: step.name}
+	return Description{Kind: DescriptionStep, Name: step.name, Role: step.Role()}
 }
 
 // String renders the definition as a compact Unicode tree.
