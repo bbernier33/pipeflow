@@ -395,10 +395,32 @@ Subflow path with status, duration, attempts, and error evidence. The Scenario's
 expectations remain authoritative, allowing an expected injected failure to be
 a passing end-to-end test.
 
-Mutation, injection, load, chaos, suites, and aggregate readiness verdicts
-remain later v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
+Type-aware mutation plans exercise plausible malformed payloads without changing
+business code:
+
+```go
+mutations := readiness.NewMutationPlan(
+    readiness.NewScenario("provider mutations", &pipeline).
+        Expect(payloadRemainsControlled),
+    map[string]any{"provider": "Clover", "items": []any{"one", "two"}},
+    readiness.WithMutationMaxCases(50),
+)
+result := mutations.Run(context.Background())
+```
+
+The deterministic generator applies one change per case: zero/nil/empty values,
+string truncation and case variants, primitive type changes through interface
+fields, missing or extra map keys, and empty/reordered/duplicated slices. It
+walks exported struct fields and nested collections without modifying the sample.
+Depth and case limits prevent accidental explosion. Generated values are
+transient; retained mutation results contain only paths, kinds, type names,
+Scenario evidence, and payload-free reports.
+
+Semantic mutation, injection, load, chaos, suites, and aggregate readiness
+verdicts remain later v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
-and [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md).
+[Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
+[Readiness Type-Aware Payload Mutation](adr/ReadinessPayloadMutation.md).
 
 ## Design Goals
 
