@@ -8,8 +8,9 @@ Pipeflow Core v1.0 is stable and intended for reuse across backend services,
 data processing, IoT, realtime applications, game backends, and other Go
 workloads.
 
-Development toward v2 has started with opt-in Operational Recovery. The v1 API
-remains frozen; v2 work is additive and unreleased.
+Additive v2 Core++ resilience and Observation tooling are implemented on the
+development branch, and the first v3 Production Readiness increment is now in
+progress. These additions are unreleased; the v1 API remains frozen.
 
 ## Project Status
 
@@ -326,6 +327,36 @@ PIPEFLOW_OBS_TOKEN=secret go run ./cmd/pipeflow-obs \
 Use `-once -color=false` for scripts and captured output. Interactive mode
 refreshes every two seconds by default and exits cleanly on Ctrl+C/SIGTERM.
 The TUI cannot submit work, cancel executions, or modify configuration.
+
+## Production Readiness Tool (v3.x development)
+
+The additive `readiness` package starts the v3 tool with an explicit
+Arrange-Act-Assert scenario model. A scenario executes the real Pipeline and
+checks its transient output, execution error, and payload-free `RunReport`.
+
+```go
+result := readiness.NewScenario("safe sample", &pipeline).
+    Arrange("use representative input and a fake sink").
+    WithInput(sample).
+    Expect(
+        readiness.RunSucceeds(),
+        readiness.Expect("output accepted", func(got readiness.Observation) readiness.Assessment {
+            if accepted(got.Output) {
+                return readiness.Passed("safe sink accepted the output")
+            }
+            return readiness.Failed("safe sink rejected the output")
+        }),
+    ).
+    Run(context.Background())
+```
+
+Every scenario declares at least one expectation. Execution failure is evidence,
+not an automatic scenario failure, because an injected failure may be precisely
+the expected behavior. Checks return `PASS`, `FAIL`, or `REVIEW`; overall
+precedence is `FAIL`, then `REVIEW`, then `PASS`. Retained results do not contain
+business output. Contract reports, mutation, injection, load, chaos, suites, and
+aggregate readiness verdicts remain later v3.x increments. See
+[Readiness Scenario Model](adr/ReadinessScenarioModel.md).
 
 ## Design Goals
 
