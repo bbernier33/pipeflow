@@ -85,6 +85,39 @@ func TestConfigPrecedenceAndEffectiveSources(t *testing.T) {
 	}
 }
 
+func TestConditionDoesNotClaimRateLimitGoOverride(t *testing.T) {
+	maxCalls := 2
+	interval := Duration(time.Second)
+	config := Config{Pipelines: map[string]PipelineConfig{"pipeline": {
+		Stages: map[string]StageConfig{"stage": {Steps: map[string]StepSettings{"step": {
+			RateLimit: &RateLimitSettings{MaxCalls: &maxCalls, Interval: &interval},
+		}}}},
+	}}}
+	step := NewStep("step", func(int) error { return nil }, WithCondition(func(int) bool { return true }))
+	configured, err := NewPipeline("pipeline", NewStage("stage", step)).WithConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, _ := configured.EffectiveConfig()
+	if got := effective.Stages[0].Steps[0].RateLimit; got.Source != ConfigSourceStep || got.Value.MaxCalls != 2 {
+		t.Fatalf("rate limit = %#v", got)
+	}
+}
+
+func TestRateLimitMarksExplicitGoOverride(t *testing.T) {
+	policy := RateLimitPolicy{MaxCalls: 1, Interval: time.Second}
+	configured, err := NewPipeline("pipeline", NewStage("stage",
+		NewStep("step", func() error { return nil }, WithRateLimit(policy)),
+	)).WithConfig(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, _ := configured.EffectiveConfig()
+	if got := effective.Stages[0].Steps[0].RateLimit; got.Source != ConfigSourceGo || got.Value != policy {
+		t.Fatalf("rate limit = %#v", got)
+	}
+}
+
 func TestConfiguredRetryAndRateLimitAffectExecution(t *testing.T) {
 	maxAttempts, maxCalls := 2, 2
 	interval := Duration(time.Millisecond)

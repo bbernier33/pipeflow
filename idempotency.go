@@ -6,9 +6,16 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 )
 
 var ErrIdempotencyInProgress = errors.New("pipeflow: idempotent work already in progress")
+
+// ErrIdempotencyFinalizationTimeout identifies a bounded Complete or Release
+// store call that did not return before its guard deadline.
+var ErrIdempotencyFinalizationTimeout = errors.New("pipeflow: idempotency store finalization timed out")
+
+const defaultIdempotencyFinalizationTimeout = 30 * time.Second
 
 type IdempotencyClaimState string
 
@@ -50,9 +57,10 @@ type compiledIdempotencyKey struct {
 
 // IdempotencyGuard binds a key namespace, atomic store, and typed key extractor.
 type IdempotencyGuard struct {
-	name  string
-	store IdempotencyStore
-	key   *compiledIdempotencyKey
+	name                string
+	store               IdempotencyStore
+	key                 *compiledIdempotencyKey
+	finalizationTimeout time.Duration
 }
 
 func NewIdempotencyGuard(name string, store IdempotencyStore, keyExtractor any) (*IdempotencyGuard, error) {
@@ -66,7 +74,22 @@ func NewIdempotencyGuard(name string, store IdempotencyStore, keyExtractor any) 
 	if err != nil {
 		return nil, err
 	}
-	return &IdempotencyGuard{name: name, store: store, key: key}, nil
+	return &IdempotencyGuard{name: name, store: store, key: key, finalizationTimeout: defaultIdempotencyFinalizationTimeout}, nil
+}
+
+// WithFinalizationTimeout returns a guard copy that bounds Complete and Release
+// store calls. Non-positive values retain the default 30-second bound.
+func (g *IdempotencyGuard) WithFinalizationTimeout(timeout time.Duration) *IdempotencyGuard {
+	if g == nil {
+		return nil
+	}
+	copyGuard := *g
+	if timeout > 0 {
+		copyGuard.finalizationTimeout = timeout
+	} else {
+		copyGuard.finalizationTimeout = defaultIdempotencyFinalizationTimeout
+	}
+	return &copyGuard
 }
 
 func compileIdempotencyKey(name string, extractor any) (*compiledIdempotencyKey, error) {
@@ -98,6 +121,32 @@ func compileIdempotencyKey(name string, extractor any) (*compiledIdempotencyKey,
 }
 
 func (g *IdempotencyGuard) storageKey(key string) string { return g.name + "\x00" + key }
+
+func (g *IdempotencyGuard) finalizeStore(parent context.Context, operation string, call func(context.Context) error) error {
+	timeout := g.finalizationTimeout
+	if timeout <= 0 {
+		timeout = defaultIdempotencyFinalizationTimeout
+	}
+	finalizeCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		var err error
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				err = fmt.Errorf("pipeflow: idempotency guard %q store %s panicked: %v", g.name, operation, recovered)
+			}
+			result <- err
+		}()
+		err = call(finalizeCtx)
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-finalizeCtx.Done():
+		return fmt.Errorf("pipeflow: idempotency guard %q store %s: %w: %v", g.name, operation, ErrIdempotencyFinalizationTimeout, finalizeCtx.Err())
+	}
+}
 
 // WithIdempotencyGuard protects a pass-through Step from duplicate completed work.
 func (s *Step) WithIdempotencyGuard(guard *IdempotencyGuard) *Step {

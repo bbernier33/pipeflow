@@ -88,7 +88,6 @@ func WithPollPredicate(predicate any) StepOption {
 // Step preserves its input value.
 func WithCondition(condition any) StepOption {
 	return func(step *Step) {
-		step.rateLimitSet = true
 		compiled, err := compileCondition(step, condition)
 		if err != nil {
 			if step.configErr == nil {
@@ -104,6 +103,7 @@ func WithCondition(condition any) StepOption {
 // applied to every retry and polling invocation.
 func WithRateLimit(policy RateLimitPolicy) StepOption {
 	return func(step *Step) {
+		step.rateLimitSet = true
 		if err := policy.validate(step.name); err != nil {
 			if step.configErr == nil {
 				step.configErr = err

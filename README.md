@@ -23,6 +23,13 @@ The Core is production-oriented: cancellation, timeouts, retries, polling,
 rate limits, structured concurrency, cleanup, panic recovery, live state, and
 payload-free reports have race and cross-feature interaction coverage.
 
+Core timeout arbitration rejects results completed after an active deadline,
+even if the Go timer callback has not yet published `Context.Err`. Idempotency
+store finalization is bounded to prevent a blocking external `Complete` or
+`Release` call from wedging Pipeline completion; use
+`guard.WithFinalizationTimeout(duration)` to choose a tighter application bound.
+See [Core Correctness Hardening](adr/CoreCorrectnessHardening.md).
+
 Contributors working on concurrency should run `go test -race ./...`. Windows
 setup and the validated MSYS2 UCRT64 command are documented in
 [Windows Race Testing](adr/RaceTestingWindows.md).
