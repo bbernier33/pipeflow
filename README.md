@@ -588,7 +588,30 @@ Scenario arrangement. Replay requires the same experiment definition and fresh
 test state. Seeds reproduce conditions, while timing and concurrent scheduling
 may vary. See [Reproducible chaos scenarios](adr/ReadinessChaosScenarios.md).
 
-Progressive integration, suites, and aggregate readiness verdicts remain later
+Progressive integration adds explicit levels and boundary grants around the
+existing Scenario and E2E contract preflight:
+
+```go
+target := readiness.StagingSink("dev orders")
+verification := readiness.NewIntegration(scenario,
+    readiness.IntegrationStagingOutput,
+    readiness.SampleIngress("fixture"), target,
+).WithPolicy(readiness.IntegrationPolicy{
+    Allowed: []readiness.Boundary{target},
+})
+result := verification.Run(context.Background())
+```
+
+The five levels cover sample/safe output, real ingress/safe output,
+sample/staging output, real ingress/staging output, and production verification.
+Real, staging, and production boundaries require exact name-and-kind grants;
+production boundaries are valid only at level 5. Missing grants and invalid
+contracts stop execution before business functions run. Applications own actual
+adapter wiring and explicitly select each level; successful tests never
+automatically enable production writes. See
+[Progressive production integration](adr/ReadinessProgressiveIntegration.md).
+
+Untested-path detection, suites, and aggregate readiness verdicts remain later
 v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and

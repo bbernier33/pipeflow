@@ -9,7 +9,7 @@ import (
 	"github.com/bbernier33/pipeflow"
 )
 
-// BoundaryKind identifies an explicitly safe end-to-end test boundary.
+// BoundaryKind identifies a declared test or integration boundary.
 type BoundaryKind string
 
 const (
@@ -17,7 +17,7 @@ const (
 	BoundarySafeSink      BoundaryKind = "safe_sink"
 )
 
-// Boundary declares a controlled edge of an end-to-end verification.
+// Boundary declares a controlled edge of an end-to-end or integration verification.
 type Boundary struct {
 	Name string
 	Kind BoundaryKind
@@ -73,8 +73,12 @@ type EndToEndResult struct {
 
 // Run performs contract preflight and then executes the real Pipeline Scenario.
 func (e EndToEnd) Run(ctx context.Context) EndToEndResult {
+	return e.run(ctx, validateBoundaries)
+}
+
+func (e EndToEnd) run(ctx context.Context, validate func([]Boundary) error) (result EndToEndResult) {
 	started := time.Now()
-	result := EndToEndResult{
+	result = EndToEndResult{
 		Name:       e.scenario.name,
 		Verdict:    VerdictFail,
 		StartedAt:  started,
@@ -85,7 +89,7 @@ func (e EndToEnd) Run(ctx context.Context) EndToEndResult {
 		result.Duration = result.EndedAt.Sub(started)
 	}()
 
-	if err := validateBoundaries(e.boundaries); err != nil {
+	if err := validate(e.boundaries); err != nil {
 		result.Error = err
 		return result
 	}
