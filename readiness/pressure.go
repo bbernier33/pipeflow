@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bbernier33/pipeflow"
+	"github.com/bbernier33/pipeflow/v3"
 )
 
 // PressureConfig defines a finite Worker queue/backpressure exercise.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bbernier33/pipeflow"
+	"github.com/bbernier33/pipeflow/v3"
 )
 
 // RecoveryExpectation specifies the exact observed Recovery sequence for a Step.

@@ -3,7 +3,7 @@ package readiness
 import (
 	"fmt"
 
-	"github.com/bbernier33/pipeflow"
+	"github.com/bbernier33/pipeflow/v3"
 )
 
 // CoverageBehavior identifies a report-observable execution path through a Step.

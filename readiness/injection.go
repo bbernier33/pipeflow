@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bbernier33/pipeflow"
+	"github.com/bbernier33/pipeflow/v3"
 )
 
 // Fault configures controlled conditions at a function execution boundary.

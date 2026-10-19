@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/bbernier33/pipeflow/obs"
-	obshttp "github.com/bbernier33/pipeflow/obs/http"
+	"github.com/bbernier33/pipeflow/v3/obs"
+	obshttp "github.com/bbernier33/pipeflow/v3/obs/http"
 )
 
 func ExampleNewHandler() {

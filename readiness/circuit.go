@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/bbernier33/pipeflow"
+	"github.com/bbernier33/pipeflow/v3"
 )
 
 // CircuitExpectation specifies exact circuit evidence for one Step invocation.

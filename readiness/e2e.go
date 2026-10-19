@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bbernier33/pipeflow"
+	"github.com/bbernier33/pipeflow/v3"
 )
 
 // BoundaryKind identifies a declared test or integration boundary.

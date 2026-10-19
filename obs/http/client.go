@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bbernier33/pipeflow/obs"
+	"github.com/bbernier33/pipeflow/v3/obs"
 )
 
 type OperationalSnapshot struct {

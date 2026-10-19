@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bbernier33/pipeflow"
+	"github.com/bbernier33/pipeflow/v3"
 )
 
 func ExamplePipeline_Run_valueFlow() {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bbernier33/pipeflow/obs"
-	"github.com/bbernier33/pipeflow/obs/history"
+	"github.com/bbernier33/pipeflow/v3/obs"
+	"github.com/bbernier33/pipeflow/v3/obs/history"
 )
 
 func ExampleStore() {

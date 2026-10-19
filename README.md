@@ -1,41 +1,24 @@
 # Pipeflow
 
-Controlled readiness failures can be composed into ordinary Step functions:
-
-```go
-faultyFetch, err := readiness.Inject(fetch, readiness.Fault{
-    Calls: 3,
-    Error: errors.New("dependency unavailable"),
-})
-// Check err, then pass faultyFetch to NewStep or NewSourceStep with real policies.
-```
-
-The wrapper preserves the function type. `Calls: 0` injects on every invocation;
-create a fresh wrapper to reset the counter between experiments. `Fault.Delay`
-adds latency, `Fault.Panic` exercises normal panic recovery, and `Fault.Cancel`
-invokes caller-owned cancellation. `WaitForCancellation` exercises timeout or
-cancellation using the context-aware Pipeflow function signature. Pair injected
-conditions with explicit Scenario expectations. See
-[Controlled failure injection](adr/ReadinessFailureInjection.md).
-
 Pipeflow is a lightweight, composable pipeline execution library for Go.
 
 It provides reusable execution primitives for structuring backend processing as pipelines, stages, and steps while keeping execution concerns separate from business logic.
 
-Pipeflow Core v1.0 is stable and intended for reuse across backend services,
+Pipeflow v3.0.0 is intended for reuse across backend services,
 data processing, IoT, realtime applications, game backends, and other Go
 workloads.
 
-Additive v2 Core++ resilience and Observation tooling are implemented on the
-development branch, and the first v3 Production Readiness increment is now in
-progress. These additions are unreleased; the v1 API remains frozen.
+V3 brings together Core execution and resilience, Observation/Operations tooling,
+and Production Readiness testing under the Go module
+`github.com/bbernier33/pipeflow/v3`. See [release notes](RELEASE_NOTES.md)
+and the [migration guide](MIGRATING_V3.md).
 
 ## Project Status
 
-Pipeflow Core v1.0.0 is released. Its public execution API and documented
-semantics are frozen for the v1 release line. See
-[API_STABILITY.md](API_STABILITY.md) for compatibility guarantees and the
-small retained deprecated surface.
+The current release is v3.0.0. Core execution remains based on ordinary Go
+functions, with shared resilience policies, payload-free observation, and
+explicit readiness expectations. The historical v1 compatibility contract is in
+[API_STABILITY.md](API_STABILITY.md); v3 requires the `/v3` import path.
 
 The Core is production-oriented: cancellation, timeouts, retries, polling,
 rate limits, structured concurrency, cleanup, panic recovery, live state, and
@@ -55,7 +38,20 @@ setup and the validated MSYS2 UCRT64 command are documented in
 ## Installation
 
 ```bash
-go get github.com/bbernier33/pipeflow@v1.0.0
+go get github.com/bbernier33/pipeflow/v3@v3.0.0
+```
+
+```go
+import (
+    "github.com/bbernier33/pipeflow/v3"
+    "github.com/bbernier33/pipeflow/v3/readiness"
+)
+```
+
+Install the optional observation CLI with:
+
+```bash
+go install github.com/bbernier33/pipeflow/v3/cmd/pipeflow-obs@v3.0.0
 ```
 
 ## Motivation
@@ -96,7 +92,7 @@ Without a shared execution layer, projects repeatedly implement:
 
 Pipeflow aims to provide these capabilities as reusable Go primitives so applications can focus on their domain logic.
 
-## Operational Recovery (v2 development)
+## Operational Recovery
 
 Operational Recovery runs only after a Step's normal retry/polling behavior is
 exhausted. It receives failure metadata, repairs execution conditions, and
@@ -168,7 +164,7 @@ Recovery. The built-in memory store is process-local; durable or distributed
 guarantees come from application-provided stores. Pipeflow does not promise
 exactly-once execution. See [Idempotency Guard](adr/IdempotencyGuard.md).
 
-## Observation / Operations Tool (v2.x development)
+## Observation / Operations Tool
 
 The separate `obs` package consumes Pipeflow telemetry without participating
 in execution:
@@ -330,9 +326,9 @@ The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
 History accepts RFC3339 `from`/`to`, `limit` (maximum 1000), and `order=asc|desc`.
 Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
-address, server lifecycle, and request logging. Persistent history,
-exporters, streaming, and multi-application aggregation remain later v2.x
-slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
+address, server lifecycle, and request logging. Exporters, streaming, and
+multi-application aggregation remain future work.
+See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
 [Queue and Worker Operational Views](adr/QueueWorkerOperationalViews.md), and
 [Resilience Operational Views](adr/ResilienceOperationalViews.md), and
 [Persistent Observation History](adr/PersistentObservationHistory.md), and
@@ -353,9 +349,9 @@ Use `-once -color=false` for scripts and captured output. Interactive mode
 refreshes every two seconds by default and exits cleanly on Ctrl+C/SIGTERM.
 The TUI cannot submit work, cancel executions, or modify configuration.
 
-## Production Readiness Tool (v3.x development)
+## Production Readiness Tool
 
-The additive `readiness` package starts the v3 tool with an explicit
+The optional `readiness` package provides an explicit
 Arrange-Act-Assert scenario model. A scenario executes the real Pipeline and
 checks its transient output, execution error, and payload-free `RunReport`.
 
@@ -505,6 +501,22 @@ active work, rejection and failure counts, report-derived completion order,
 graceful drain, and final Worker status. Every accepted item retains its complete
 payload-free report and Scenario checks; outputs are discarded. Single-worker
 ordering can be asserted explicitly with `CompletionOrderPreserved`.
+
+Controlled readiness failures can be composed into ordinary Step functions:
+
+```go
+faultyFetch, err := readiness.Inject(fetch, readiness.Fault{
+    Calls: 3,
+    Error: errors.New("dependency unavailable"),
+})
+// Check err, then pass faultyFetch to NewStep or NewSourceStep with real policies.
+```
+
+The wrapper preserves the function type. `Calls: 0` injects on every invocation;
+create a fresh wrapper to reset the counter between experiments. `Fault.Delay`
+adds latency, `Fault.Panic` exercises normal panic recovery, and `Fault.Cancel`
+invokes caller-owned cancellation. Pair faults with explicit Scenario expectations.
+See [Controlled failure injection](adr/ReadinessFailureInjection.md).
 
 Recovery behavior can be asserted directly from the existing execution reports:
 
@@ -661,8 +673,8 @@ and gaps. Original evidence retains full execution reports. READY reflects the
 declared test scope and never enables production access. See
 [Aggregate readiness reporting](adr/ReadinessAggregateReporting.md).
 
-The v3 readiness roadmap's initial reporting milestone is implemented on the
-development branch; these additions remain unreleased. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
+The initial v3 readiness scope is included in v3.0.0.
+See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
 [Readiness Type-Aware Payload Mutation](adr/ReadinessPayloadMutation.md), and
@@ -1876,13 +1888,11 @@ new execution modes or public API. See
 - Logging
 - Error propagation
 
-## V1 Release
+## Releases
 
-The current stable release is [`v1.0.0`](https://github.com/bbernier33/pipeflow/releases/tag/v1.0.0).
-Core v1 is complete: future compatible v1 releases may add APIs, while breaking
-changes require a new major version. Streaming, transport adapters, ETL, AI,
-and other domain capabilities can build around the frozen Core rather than
-expanding its execution model.
+The current release is [`v3.0.0`](https://github.com/bbernier33/pipeflow/releases/tag/v3.0.0).
+V1 remains available at its original module path and tag. V3 uses the semantic
+import path `/v3`; see [migration instructions](MIGRATING_V3.md).
 
 ## V1.1 Configuration
 

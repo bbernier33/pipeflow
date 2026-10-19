@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bbernier33/pipeflow"
-	"github.com/bbernier33/pipeflow/readiness"
+	"github.com/bbernier33/pipeflow/v3"
+	"github.com/bbernier33/pipeflow/v3/readiness"
 )
 
 func ExampleBuildReadinessReport() {

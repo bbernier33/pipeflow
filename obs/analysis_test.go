@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	pipeflow "github.com/bbernier33/pipeflow"
-	"github.com/bbernier33/pipeflow/obs"
+	pipeflow "github.com/bbernier33/pipeflow/v3"
+	"github.com/bbernier33/pipeflow/v3/obs"
 )
 
 func TestAnalyzeAttributesOperationalBottlenecks(t *testing.T) {

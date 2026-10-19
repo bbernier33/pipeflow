@@ -1,6 +1,6 @@
 package readiness
 
-import "github.com/bbernier33/pipeflow"
+import "github.com/bbernier33/pipeflow/v3"
 
 // ContractResult is a payload-free pre-execution topology and contract review.
 type ContractResult struct {

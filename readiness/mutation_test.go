@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/bbernier33/pipeflow"
-	"github.com/bbernier33/pipeflow/readiness"
+	"github.com/bbernier33/pipeflow/v3"
+	"github.com/bbernier33/pipeflow/v3/readiness"
 )
 
 type mutationOrder struct {

@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	obshttp "github.com/bbernier33/pipeflow/obs/http"
-	"github.com/bbernier33/pipeflow/obs/tui"
+	obshttp "github.com/bbernier33/pipeflow/v3/obs/http"
+	"github.com/bbernier33/pipeflow/v3/obs/tui"
 )
 
 func main() {

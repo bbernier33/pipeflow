@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	pipeflow "github.com/bbernier33/pipeflow"
+	pipeflow "github.com/bbernier33/pipeflow/v3"
 )
 
 type CorrelationOptions struct {

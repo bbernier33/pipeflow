@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bbernier33/pipeflow"
-	"github.com/bbernier33/pipeflow/readiness"
+	"github.com/bbernier33/pipeflow/v3"
+	"github.com/bbernier33/pipeflow/v3/readiness"
 )
 
 func chaosScenario(t *testing.T, c readiness.ChaosCase) readiness.Scenario {
