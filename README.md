@@ -528,7 +528,27 @@ Branches, and missing or ambiguous paths fail. Compose with `RunSucceeds` and
 custom Scenario expectations to verify continued processing, output, nested
 repair Steps, and cleanup. See [Recovery readiness testing](adr/ReadinessRecoveryTesting.md).
 
-Circuit/idempotency readiness checks, chaos, suites, and aggregate readiness verdicts remain later
+Circuit-breaker behavior uses the same Scenario expectation model:
+
+```go
+scenario = scenario.Expect(readiness.ExpectCircuit("orders/load/fetch",
+    readiness.CircuitExpectation{
+        Circuit: pipeflow.CircuitReport{
+            Dependency: "inventory",
+            StateBefore: pipeflow.CircuitClosed,
+            StateAfter: pipeflow.CircuitOpen,
+        },
+        Status: pipeflow.StatusFailed,
+        Error: unavailable,
+    }))
+```
+
+All circuit fields, including probe and short-circuit flags, match exactly.
+Share a breaker across scenarios to exercise opening, suppressed calls, half-open
+probes, and closing or reopening. Each expectation reads that invocation's
+recorded evidence. See [Circuit-breaker readiness testing](adr/ReadinessCircuitTesting.md).
+
+Idempotency readiness checks, chaos, suites, and aggregate readiness verdicts remain later
 v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and

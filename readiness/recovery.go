@@ -35,7 +35,7 @@ type RecoveryRunExpectation struct {
 func ExpectRecovery(path string, expected RecoveryExpectation) Expectation {
 	expected.Runs = append([]RecoveryRunExpectation(nil), expected.Runs...)
 	return Expect("recovery at "+path, func(observed Observation) Assessment {
-		steps := recoverySteps(observed.Report)
+		steps := reportSteps(observed.Report)
 		matches := steps[path]
 		if len(matches) != 1 {
 			return Failed(fmt.Sprintf("expected one Step at %q, found %d", path, len(matches)))
@@ -79,7 +79,7 @@ func ExpectRecovery(path string, expected RecoveryExpectation) Expectation {
 	})
 }
 
-func recoverySteps(report pipeflow.RunReport) map[string][]pipeflow.StepReport {
+func reportSteps(report pipeflow.RunReport) map[string][]pipeflow.StepReport {
 	result := make(map[string][]pipeflow.StepReport)
 	add := func(path string, step pipeflow.StepReport) { result[path] = append(result[path], step) }
 	var stages func(string, []pipeflow.StageReport)
