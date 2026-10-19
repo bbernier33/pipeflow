@@ -611,7 +611,31 @@ adapter wiring and explicitly select each level; successful tests never
 automatically enable production writes. See
 [Progressive production integration](adr/ReadinessProgressiveIntegration.md).
 
-Untested-path detection, suites, and aggregate readiness verdicts remain later
+Untested paths remain visible even when individual scenarios pass:
+
+```go
+coverage := readiness.DetectUntestedPaths(&pipeline, reports,
+    readiness.CoverageRequirement{
+        Path: "orders/load/fetch",
+        Behavior: readiness.CoverageRecoveryFailPipeline,
+        Critical: true,
+    },
+    readiness.CoverageRequirement{
+        Path: "orders/output/charge",
+        Behavior: readiness.CoverageIdempotencyDuplicate,
+    },
+)
+```
+
+Every declared Step requires an executed attempt. Skipped, pending, or missing
+Steps remain gaps. Explicit requirements cover policy branches such as retries,
+Recovery decisions, half-open probes, and duplicate handling. Missing coverage
+produces `REVIEW`, or `FAIL` for critical gaps. Opaque custom StageItems require
+review. Supply terminal reports from the same Pipeline revision and declare
+dormant policy paths explicitly; topology descriptions do not expose them all.
+See [Untested-path detection](adr/ReadinessUntestedPaths.md).
+
+Suites and aggregate readiness verdicts remain later
 v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
