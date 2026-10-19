@@ -565,7 +565,30 @@ claims, and failed/releasable claims. Optional `Error` and `StoreError` checks u
 store durability and exactly-once behavior are not inferred from a passing
 scenario. See [Idempotency readiness testing](adr/ReadinessIdempotencyTesting.md).
 
-Chaos, progressive integration, suites, and aggregate readiness verdicts remain later
+Seeded chaos plans compose the existing Scenario, LoadPlan, and PressurePlan:
+
+```go
+plan := readiness.NewChaosPlan(2026, 20,
+    func(ctx context.Context, c readiness.ChaosCase) (readiness.ChaosEvidence, error) {
+        random := c.Random()
+        // Build fresh fixtures, wrappers, and policies from these choices.
+        scenario, err := buildOutageAndPressureScenario(random)
+        if err != nil { return readiness.ChaosEvidence{}, err }
+        result := scenario.Run(ctx)
+        return readiness.ChaosEvidence{Scenario: &result}, nil
+    })
+result := plan.Run(context.Background())
+replay := plan.RunCase(context.Background(), 7)
+```
+
+Return exactly one `Scenario`, `Load`, or `Pressure` result. Every case retains
+its seed and existing readiness evidence; individual failures remain replayable.
+Generate conditions before launching concurrent work and describe them in the
+Scenario arrangement. Replay requires the same experiment definition and fresh
+test state. Seeds reproduce conditions, while timing and concurrent scheduling
+may vary. See [Reproducible chaos scenarios](adr/ReadinessChaosScenarios.md).
+
+Progressive integration, suites, and aggregate readiness verdicts remain later
 v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
