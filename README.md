@@ -506,7 +506,29 @@ graceful drain, and final Worker status. Every accepted item retains its complet
 payload-free report and Scenario checks; outputs are discarded. Single-worker
 ordering can be asserted explicitly with `CompletionOrderPreserved`.
 
-Failure injection, chaos, suites, and aggregate readiness verdicts remain later
+Recovery behavior can be asserted directly from the existing execution reports:
+
+```go
+scenario = scenario.Expect(readiness.ExpectRecovery("orders/load/fetch",
+    readiness.RecoveryExpectation{
+        Attempts: 3, Status: pipeflow.StatusCompleted,
+        Runs: []readiness.RecoveryRunExpectation{{
+            Name: "refresh credentials",
+            Status: pipeflow.StatusCompleted,
+            Decision: pipeflow.RecoveryRetryStep,
+            OriginalError: unauthorized,
+        }},
+    }))
+```
+
+Activation counts and order are exact. Optional checks constrain Step attempts
+and status, Recovery name/status/decision, and error identity via `errors.Is`.
+An empty `Runs` list asserts no activation. Paths include Subflows and Parallel
+Branches, and missing or ambiguous paths fail. Compose with `RunSucceeds` and
+custom Scenario expectations to verify continued processing, output, nested
+repair Steps, and cleanup. See [Recovery readiness testing](adr/ReadinessRecoveryTesting.md).
+
+Circuit/idempotency readiness checks, chaos, suites, and aggregate readiness verdicts remain later
 v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
