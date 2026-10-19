@@ -548,7 +548,24 @@ Share a breaker across scenarios to exercise opening, suppressed calls, half-ope
 probes, and closing or reopening. Each expectation reads that invocation's
 recorded evidence. See [Circuit-breaker readiness testing](adr/ReadinessCircuitTesting.md).
 
-Idempotency readiness checks, chaos, suites, and aggregate readiness verdicts remain later
+Idempotency scenarios can assert the exact guard, claim, and outcome evidence:
+
+```go
+scenario = scenario.Expect(readiness.ExpectIdempotency("orders/output/charge",
+    readiness.IdempotencyExpectation{
+        Guard: "payments",
+        Outcome: pipeflow.IdempotencyDuplicateCompleted,
+        Status: pipeflow.StatusSkipped,
+    }))
+```
+
+Share a guard/store between runs to exercise completed duplicates, concurrent
+claims, and failed/releasable claims. Optional `Error` and `StoreError` checks use
+`errors.Is`. Pair report assertions with application-owned side-effect checks;
+store durability and exactly-once behavior are not inferred from a passing
+scenario. See [Idempotency readiness testing](adr/ReadinessIdempotencyTesting.md).
+
+Chaos, progressive integration, suites, and aggregate readiness verdicts remain later
 v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
