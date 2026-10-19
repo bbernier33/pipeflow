@@ -635,8 +635,34 @@ review. Supply terminal reports from the same Pipeline revision and declare
 dormant policy paths explicitly; topology descriptions do not expose them all.
 See [Untested-path detection](adr/ReadinessUntestedPaths.md).
 
-Suites and aggregate readiness verdicts remain later
-v3.x increments. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
+Aggregate the executed evidence into a policy-based readiness report:
+
+```go
+report := readiness.BuildReadinessReport(readiness.ReadinessPolicy{},
+    readiness.ReadinessEvidence{Name: "contracts", Result: contracts},
+    readiness.ReadinessEvidence{Name: "sample E2E", Result: e2e},
+    readiness.ReadinessEvidence{Name: "required paths", Result: coverage},
+)
+fmt.Print(report.String())
+```
+
+The default policy requires contracts, E2E, and coverage evidence. A nonempty
+`Required` list replaces that baseline with explicit application requirements,
+such as contracts, E2E, coverage, load, pressure, recovery, and integration.
+Failures, missing categories, and critical gaps produce
+`NOT READY`; unresolved behavior produces `REVIEW REQUIRED`. Accepted warnings
+produce `READY WITH WARNINGS`; otherwise satisfied requirements produce `READY`.
+`WarningsAsFailures` tightens policy, while `AllowNonCriticalGaps` explicitly
+permits coverage-only noncritical gaps as warnings. It cannot downgrade failures
+or critical gaps.
+
+The report retains metadata summaries, checks, run IDs, warning/review items,
+and gaps. Original evidence retains full execution reports. READY reflects the
+declared test scope and never enables production access. See
+[Aggregate readiness reporting](adr/ReadinessAggregateReporting.md).
+
+The v3 readiness roadmap's initial reporting milestone is implemented on the
+development branch; these additions remain unreleased. See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
 and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
 [Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
 [Readiness Type-Aware Payload Mutation](adr/ReadinessPayloadMutation.md), and
