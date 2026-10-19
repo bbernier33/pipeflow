@@ -1,5 +1,23 @@
 # Pipeflow
 
+Controlled readiness failures can be composed into ordinary Step functions:
+
+```go
+faultyFetch, err := readiness.Inject(fetch, readiness.Fault{
+    Calls: 3,
+    Error: errors.New("dependency unavailable"),
+})
+// Check err, then pass faultyFetch to NewStep or NewSourceStep with real policies.
+```
+
+The wrapper preserves the function type. `Calls: 0` injects on every invocation;
+create a fresh wrapper to reset the counter between experiments. `Fault.Delay`
+adds latency, `Fault.Panic` exercises normal panic recovery, and `Fault.Cancel`
+invokes caller-owned cancellation. `WaitForCancellation` exercises timeout or
+cancellation using the context-aware Pipeflow function signature. Pair injected
+conditions with explicit Scenario expectations. See
+[Controlled failure injection](adr/ReadinessFailureInjection.md).
+
 Pipeflow is a lightweight, composable pipeline execution library for Go.
 
 It provides reusable execution primitives for structuring backend processing as pipelines, stages, and steps while keeping execution concerns separate from business logic.
