@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	pipeflow "github.com/bbernier33/pipeflow"
-	"github.com/bbernier33/pipeflow/obs"
-	"github.com/bbernier33/pipeflow/obs/history"
-	obshttp "github.com/bbernier33/pipeflow/obs/http"
+	pipeflow "github.com/bbernier33/pipeflow/v3"
+	"github.com/bbernier33/pipeflow/v3/obs"
+	"github.com/bbernier33/pipeflow/v3/obs/history"
+	obshttp "github.com/bbernier33/pipeflow/v3/obs/http"
 )
 
 func observedHandler(t *testing.T, options obshttp.Options) http.Handler {

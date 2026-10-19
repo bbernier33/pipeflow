@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type idempotencyWork struct {
@@ -175,5 +176,76 @@ func TestIdempotencyStoreCompletionFailureIsVisible(t *testing.T) {
 	idempotency := report.Stages[0].Steps[0].Idempotency
 	if idempotency == nil || idempotency.Outcome != IdempotencyStoreFailure || !errors.Is(idempotency.Error, storeErr) {
 		t.Fatalf("report=%+v", idempotency)
+	}
+}
+
+type blockingFinalizationStore struct {
+	IdempotencyStore
+	completeStarted chan struct{}
+	releaseStarted  chan struct{}
+	unblock         chan struct{}
+	completeOnce    sync.Once
+	releaseOnce     sync.Once
+}
+
+func (s *blockingFinalizationStore) Complete(context.Context, string) error {
+	s.completeOnce.Do(func() { close(s.completeStarted) })
+	<-s.unblock
+	return nil
+}
+
+func (s *blockingFinalizationStore) Release(context.Context, string) error {
+	s.releaseOnce.Do(func() { close(s.releaseStarted) })
+	<-s.unblock
+	return nil
+}
+
+func newBlockingFinalizationStore() *blockingFinalizationStore {
+	return &blockingFinalizationStore{
+		IdempotencyStore: NewMemoryIdempotencyStore(),
+		completeStarted:  make(chan struct{}),
+		releaseStarted:   make(chan struct{}),
+		unblock:          make(chan struct{}),
+	}
+}
+
+func TestIdempotencyCompleteCannotWedgeExecution(t *testing.T) {
+	store := newBlockingFinalizationStore()
+	defer close(store.unblock)
+	guard := guardForWork(t, store).WithFinalizationTimeout(10 * time.Millisecond)
+	p := NewPipeline("p", NewStage("s", NewStep("charge", func(idempotencyWork) error { return nil }).WithIdempotencyGuard(guard)))
+	started := time.Now()
+	_, report, err := p.RunWithReport(context.Background(), idempotencyWork{ID: "complete"})
+	if time.Since(started) > time.Second || !errors.Is(err, ErrIdempotencyFinalizationTimeout) {
+		t.Fatalf("elapsed=%s err=%v", time.Since(started), err)
+	}
+	select {
+	case <-store.completeStarted:
+	default:
+		t.Fatal("Complete was not called")
+	}
+	got := report.Stages[0].Steps[0].Idempotency
+	if got == nil || got.Outcome != IdempotencyStoreFailure || !errors.Is(got.Error, ErrIdempotencyFinalizationTimeout) {
+		t.Fatalf("idempotency report = %#v", got)
+	}
+}
+
+func TestIdempotencyReleaseCannotWedgeExecution(t *testing.T) {
+	store := newBlockingFinalizationStore()
+	defer close(store.unblock)
+	guard := guardForWork(t, store).WithFinalizationTimeout(10 * time.Millisecond)
+	workErr := errors.New("charge failed")
+	p := NewPipeline("p", NewStage("s", NewStep("charge", func(idempotencyWork) error { return workErr }).WithIdempotencyGuard(guard)))
+	_, report, err := p.RunWithReport(context.Background(), idempotencyWork{ID: "release"})
+	if !errors.Is(err, workErr) || !errors.Is(err, ErrIdempotencyFinalizationTimeout) {
+		t.Fatalf("err=%v", err)
+	}
+	select {
+	case <-store.releaseStarted:
+	default:
+		t.Fatal("Release was not called")
+	}
+	if got := report.Stages[0].Steps[0].Idempotency; got == nil || got.Outcome != IdempotencyStoreFailure {
+		t.Fatalf("idempotency report = %#v", got)
 	}
 }

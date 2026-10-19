@@ -1,4 +1,4 @@
-module github.com/bbernier33/pipeflow
+module github.com/bbernier33/pipeflow/v3
 
 go 1.26.5
 

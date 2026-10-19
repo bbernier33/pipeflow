@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	obshttp "github.com/bbernier33/pipeflow/obs/http"
+	obshttp "github.com/bbernier33/pipeflow/v3/obs/http"
 )
 
 type Options struct {

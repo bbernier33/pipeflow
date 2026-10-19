@@ -1,5 +1,11 @@
 # Pipeflow v1 API Stability
 
+V3.0.0 ships under `github.com/bbernier33/pipeflow/v3`. The document below records
+the historical v1 compatibility contract. The `/v3` migration is an explicit Go
+module/type boundary; see [MIGRATING_V3.md](MIGRATING_V3.md). Existing Core
+execution semantics are retained in v3, with the additive resilience,
+observation, and readiness capabilities described in [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
 Pipeflow Core's public API is frozen for v1 as of Phase 23. The supported
 surface is the exported Go API documented by `go doc`, with the compatibility
 exceptions below.

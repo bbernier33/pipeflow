@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	pipeflow "github.com/bbernier33/pipeflow"
+	pipeflow "github.com/bbernier33/pipeflow/v3"
 )
 
 // Compile-time assignments intentionally pin the v1 method signatures used by

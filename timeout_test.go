@@ -7,6 +7,29 @@ import (
 	"time"
 )
 
+type delayedDeadlineContext struct {
+	deadline time.Time
+	done     chan struct{}
+}
+
+func (c delayedDeadlineContext) Deadline() (time.Time, bool) { return c.deadline, true }
+func (c delayedDeadlineContext) Done() <-chan struct{}       { return c.done }
+func (c delayedDeadlineContext) Err() error                  { return nil }
+func (c delayedDeadlineContext) Value(any) any               { return nil }
+
+func TestExpiredDeadlineCannotAcceptLateSuccessBeforeTimerSignal(t *testing.T) {
+	ctx := delayedDeadlineContext{deadline: time.Now().Add(-time.Millisecond), done: make(chan struct{})}
+	consumerRan := false
+	p := NewPipeline("pipeline", NewStage("stage",
+		NewStep("producer", func() (int, error) { return 42, nil }),
+		NewStep("consumer", func(int) error { consumerRan = true; return nil }),
+	))
+	output, report, err := p.RunWithReport(ctx)
+	if output != nil || !errors.Is(err, context.DeadlineExceeded) || consumerRan || report.Status != StatusTimeout {
+		t.Fatalf("output=%v consumer=%v status=%s err=%v", output, consumerRan, report.Status, err)
+	}
+}
+
 func waitForContext(goCtx context.Context, _ *Context, _ any) (any, error) {
 	<-goCtx.Done()
 	return nil, goCtx.Err()

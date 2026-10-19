@@ -256,6 +256,9 @@ func TestWorkerMaxInFlightBlocksAdmissionAndStateIsPayloadFree(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := worker.Wait(); err != nil {
+		t.Fatal(err)
+	}
 	if final := worker.State(); final.Completed != 3 || final.Failed != 0 {
 		t.Fatalf("final=%+v", final)
 	}

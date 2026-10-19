@@ -177,10 +177,14 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 			outcome := IdempotencyExecuted
 			var storeErr error
 			if err == nil {
-				storeErr = s.idempotency.store.Complete(goCtx, s.idempotency.storageKey(key))
+				storeErr = s.idempotency.finalizeStore(goCtx, "complete", func(finalizeCtx context.Context) error {
+					return s.idempotency.store.Complete(finalizeCtx, s.idempotency.storageKey(key))
+				})
 			} else {
 				outcome = IdempotencyFailedReleasable
-				storeErr = s.idempotency.store.Release(context.WithoutCancel(goCtx), s.idempotency.storageKey(key))
+				storeErr = s.idempotency.finalizeStore(goCtx, "release", func(finalizeCtx context.Context) error {
+					return s.idempotency.store.Release(finalizeCtx, s.idempotency.storageKey(key))
+				})
 			}
 			if storeErr != nil {
 				outcome = IdempotencyStoreFailure
@@ -240,6 +244,10 @@ func (s *Step) run(goCtx context.Context, ctx *Context, input any, recorder *run
 			normalCtx, cancel = context.WithTimeout(goCtx, s.timeout)
 		}
 		output, err = s.runNormal(normalCtx, ctx, input, recorder, reportPath, lifecycle, stageName, parallelName, branchName)
+		if completionErr := contextCompletionErr(normalCtx, time.Now()); completionErr != nil {
+			output = nil
+			err = annotateExecutionError(completionErr, "", "", s.name, recoveryAttemptNumber(err))
+		}
 		cancel()
 		if err == nil || s.recovery == nil {
 			return output, err
@@ -475,7 +483,7 @@ func (s *Step) runAttempts(goCtx context.Context, ctx *Context, input any, recor
 				}
 			}
 		}
-		if contextErr := goCtx.Err(); contextErr != nil {
+		if contextErr := contextCompletionErr(goCtx, time.Now()); contextErr != nil {
 			output = nil
 			err = contextErr
 		}
@@ -558,6 +566,16 @@ func invokeRetryPredicate(predicate func(error) bool, failure error) (retry bool
 func invokeStepAction(action func(context.Context, *Context, any) (any, error), goCtx context.Context, ctx *Context, input any) (output any, err error) {
 	defer recoverPanic(&err)
 	return action(goCtx, ctx, input)
+}
+
+func contextCompletionErr(ctx context.Context, completedAt time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !completedAt.Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 func adaptStepAction(name string, action any) (func(context.Context, *Context, any) (any, error), reflect.Type, reflect.Type, stepFlow, error) {

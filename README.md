@@ -4,23 +4,32 @@ Pipeflow is a lightweight, composable pipeline execution library for Go.
 
 It provides reusable execution primitives for structuring backend processing as pipelines, stages, and steps while keeping execution concerns separate from business logic.
 
-Pipeflow Core v1.0 is stable and intended for reuse across backend services,
+Pipeflow v3.0.0 is intended for reuse across backend services,
 data processing, IoT, realtime applications, game backends, and other Go
 workloads.
 
-Development toward v2 has started with opt-in Operational Recovery. The v1 API
-remains frozen; v2 work is additive and unreleased.
+V3 brings together Core execution and resilience, Observation/Operations tooling,
+and Production Readiness testing under the Go module
+`github.com/bbernier33/pipeflow/v3`. See [release notes](RELEASE_NOTES.md)
+and the [migration guide](MIGRATING_V3.md).
 
 ## Project Status
 
-Pipeflow Core v1.0.0 is released. Its public execution API and documented
-semantics are frozen for the v1 release line. See
-[API_STABILITY.md](API_STABILITY.md) for compatibility guarantees and the
-small retained deprecated surface.
+The current release is v3.0.0. Core execution remains based on ordinary Go
+functions, with shared resilience policies, payload-free observation, and
+explicit readiness expectations. The historical v1 compatibility contract is in
+[API_STABILITY.md](API_STABILITY.md); v3 requires the `/v3` import path.
 
 The Core is production-oriented: cancellation, timeouts, retries, polling,
 rate limits, structured concurrency, cleanup, panic recovery, live state, and
 payload-free reports have race and cross-feature interaction coverage.
+
+Core timeout arbitration rejects results completed after an active deadline,
+even if the Go timer callback has not yet published `Context.Err`. Idempotency
+store finalization is bounded to prevent a blocking external `Complete` or
+`Release` call from wedging Pipeline completion; use
+`guard.WithFinalizationTimeout(duration)` to choose a tighter application bound.
+See [Core Correctness Hardening](adr/CoreCorrectnessHardening.md).
 
 Contributors working on concurrency should run `go test -race ./...`. Windows
 setup and the validated MSYS2 UCRT64 command are documented in
@@ -29,7 +38,20 @@ setup and the validated MSYS2 UCRT64 command are documented in
 ## Installation
 
 ```bash
-go get github.com/bbernier33/pipeflow@v1.0.0
+go get github.com/bbernier33/pipeflow/v3@v3.0.0
+```
+
+```go
+import (
+    "github.com/bbernier33/pipeflow/v3"
+    "github.com/bbernier33/pipeflow/v3/readiness"
+)
+```
+
+Install the optional observation CLI with:
+
+```bash
+go install github.com/bbernier33/pipeflow/v3/cmd/pipeflow-obs@v3.0.0
 ```
 
 ## Motivation
@@ -70,7 +92,7 @@ Without a shared execution layer, projects repeatedly implement:
 
 Pipeflow aims to provide these capabilities as reusable Go primitives so applications can focus on their domain logic.
 
-## Operational Recovery (v2 development)
+## Operational Recovery
 
 Operational Recovery runs only after a Step's normal retry/polling behavior is
 exhausted. It receives failure metadata, repairs execution conditions, and
@@ -142,7 +164,7 @@ Recovery. The built-in memory store is process-local; durable or distributed
 guarantees come from application-provided stores. Pipeflow does not promise
 exactly-once execution. See [Idempotency Guard](adr/IdempotencyGuard.md).
 
-## Observation / Operations Tool (v2.x development)
+## Observation / Operations Tool
 
 The separate `obs` package consumes Pipeflow telemetry without participating
 in execution:
@@ -304,9 +326,9 @@ The handler serves `GET`/`HEAD` on `/healthz`, `/v1/health`, `/v1/workers`,
 History accepts RFC3339 `from`/`to`, `limit` (maximum 1000), and `order=asc|desc`.
 Responses are versioned, payload-free JSON with caching
 disabled. The embedding application owns authentication policy, TLS, bind
-address, server lifecycle, and request logging. Persistent history,
-exporters, streaming, and multi-application aggregation remain later v2.x
-slices. See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
+address, server lifecycle, and request logging. Exporters, streaming, and
+multi-application aggregation remain future work.
+See [Observation Tool Foundation](adr/ObservationToolFoundation.md),
 [Queue and Worker Operational Views](adr/QueueWorkerOperationalViews.md), and
 [Resilience Operational Views](adr/ResilienceOperationalViews.md), and
 [Persistent Observation History](adr/PersistentObservationHistory.md), and
@@ -326,6 +348,339 @@ PIPEFLOW_OBS_TOKEN=secret go run ./cmd/pipeflow-obs \
 Use `-once -color=false` for scripts and captured output. Interactive mode
 refreshes every two seconds by default and exits cleanly on Ctrl+C/SIGTERM.
 The TUI cannot submit work, cancel executions, or modify configuration.
+
+## Production Readiness Tool
+
+The optional `readiness` package provides an explicit
+Arrange-Act-Assert scenario model. A scenario executes the real Pipeline and
+checks its transient output, execution error, and payload-free `RunReport`.
+
+```go
+result := readiness.NewScenario("safe sample", &pipeline).
+    Arrange("use representative input and a fake sink").
+    WithInput(sample).
+    Expect(
+        readiness.RunSucceeds(),
+        readiness.Expect("output accepted", func(got readiness.Observation) readiness.Assessment {
+            if accepted(got.Output) {
+                return readiness.Passed("safe sink accepted the output")
+            }
+            return readiness.Failed("safe sink rejected the output")
+        }),
+    ).
+    Run(context.Background())
+```
+
+Every scenario declares at least one expectation. Execution failure is evidence,
+not an automatic scenario failure, because an injected failure may be precisely
+the expected behavior. Checks return `PASS`, `FAIL`, or `REVIEW`; overall
+precedence is `FAIL`, then `REVIEW`, then `PASS`. Retained results do not contain
+business output.
+
+Contract and topology readiness is available before execution:
+
+```go
+contracts := readiness.InspectContractsInput(&pipeline, sample)
+for _, boundary := range contracts.Boundaries {
+    fmt.Printf("%s (%s) -> %s (%s): %s\n",
+        boundary.Producer.Name, boundary.Producer.Type,
+        boundary.Consumer.Name, boundary.Consumer.Type,
+        boundary.Status)
+}
+```
+
+Known compatible boundaries produce `PASS`, known incompatible boundaries
+produce `FAIL`, and types that cannot be established before execution produce
+`REVIEW`. Pass-through Steps preserve the identity of the value's actual
+producer. The underlying Core `InspectFlow` methods expose structured endpoints
+and Go type names without functions or payloads, so tools never need to parse
+validation error strings.
+
+Safe end-to-end verification composes contract inspection with a real Scenario:
+
+```go
+e2e := readiness.NewEndToEnd(
+    readiness.NewScenario("sample order", &pipeline).
+        WithInput(sample).
+        Expect(readiness.RunSucceeds(), outputWasCaptured),
+    readiness.SampleIngress("order fixture"),
+    readiness.SafeSink("in-memory capture"),
+)
+result := e2e.Run(context.Background())
+```
+
+The verifier rejects missing, duplicate, or unsupported boundary declarations
+and stops before execution when contract preflight fails. Its payload-free
+coverage lists every reported Pipeline, Stage, Step, Parallel, Branch, and
+Subflow path with status, duration, attempts, and error evidence. The Scenario's
+expectations remain authoritative, allowing an expected injected failure to be
+a passing end-to-end test.
+
+Type-aware mutation plans exercise plausible malformed payloads without changing
+business code:
+
+```go
+mutations := readiness.NewMutationPlan(
+    readiness.NewScenario("provider mutations", &pipeline).
+        Expect(payloadRemainsControlled),
+    map[string]any{"provider": "Clover", "items": []any{"one", "two"}},
+    readiness.WithMutationMaxCases(50),
+)
+result := mutations.Run(context.Background())
+```
+
+The deterministic generator applies one change per case: zero/nil/empty values,
+string truncation and case variants, primitive type changes through interface
+fields, missing or extra map keys, and empty/reordered/duplicated slices. It
+walks exported struct fields and nested collections without modifying the sample.
+Depth and case limits prevent accidental explosion. Generated values are
+transient; retained mutation results contain only paths, kinds, type names,
+Scenario evidence, and payload-free reports.
+
+Semantic cases let applications classify domain-specific behavior without
+teaching Pipeflow what a UUID, identifier, timestamp, or amount means:
+
+```go
+semantics := readiness.NewSemanticPlan(scenario,
+    readiness.NewSemanticCase("UUID v4", "$.id", validV4).
+        ExpectBehavior(readiness.SemanticAccept),
+    readiness.NewSemanticCase("UUID v1", "$.id", validV1).
+        ExpectBehavior(readiness.SemanticReject).
+        Verify(rejectedForUnsupportedVersion),
+    readiness.NewSemanticCase("uppercase UUID", "$.id", uppercase),
+)
+result := semantics.Run(context.Background())
+```
+
+Unclassified cases produce `REVIEW`. Once the developer records ACCEPT or
+REJECT in ordinary Go code, later runs become deterministic regression checks.
+Optional payload-free evidence checks verify the reason for behavior so an
+unrelated failure cannot masquerade as the expected rejection.
+
+Bounded finite load plans reuse the same Scenario and Pipeline execution path:
+
+```go
+load := readiness.NewLoadPlan(scenario, readiness.LoadConfig{
+    Runs: 10_000, Concurrency: 50, StartsPerSecond: 500,
+}).
+    Inputs(func(index int) (any, error) { return event(index), nil }).
+    Expect(
+        readiness.PipelineFailureRateAtMost(0),
+        readiness.P95Within(250*time.Millisecond),
+        readiness.ThroughputAtLeast(400),
+    )
+result := load.Run(context.Background())
+```
+
+Each started run retains its complete payload-free `RunReport`; outputs are not
+retained. Aggregates distinguish Pipeline failures from Scenario failures and
+report completed runs, reviews, maximum concurrency, throughput, and
+min/mean/p50/p95/p99/max execution latency. Input factories and expectation
+panics become ordinary failed evidence. Cancellation stops submission and waits
+for already-started runs.
+
+Flow-pressure plans drive the real bounded Worker queue:
+
+```go
+pressure := readiness.NewPressurePlan(scenario, readiness.PressureConfig{
+    Items: 5_000,
+    Worker: pipeflow.WorkerOptions{Workers: 8, Buffer: 64, MaxInFlight: 72},
+    BackpressureThreshold: time.Millisecond,
+}).
+    Inputs(eventInput).
+    Expect(
+        readiness.BackpressureObserved(),
+        readiness.QueueDepthAtMost(64),
+        readiness.AllAcceptedWorkDrained(),
+    )
+result := pressure.Run(context.Background())
+```
+
+The result records submit latency and blocking, maximum queue depth/in-flight/
+active work, rejection and failure counts, report-derived completion order,
+graceful drain, and final Worker status. Every accepted item retains its complete
+payload-free report and Scenario checks; outputs are discarded. Single-worker
+ordering can be asserted explicitly with `CompletionOrderPreserved`.
+
+Controlled readiness failures can be composed into ordinary Step functions:
+
+```go
+faultyFetch, err := readiness.Inject(fetch, readiness.Fault{
+    Calls: 3,
+    Error: errors.New("dependency unavailable"),
+})
+// Check err, then pass faultyFetch to NewStep or NewSourceStep with real policies.
+```
+
+The wrapper preserves the function type. `Calls: 0` injects on every invocation;
+create a fresh wrapper to reset the counter between experiments. `Fault.Delay`
+adds latency, `Fault.Panic` exercises normal panic recovery, and `Fault.Cancel`
+invokes caller-owned cancellation. Pair faults with explicit Scenario expectations.
+See [Controlled failure injection](adr/ReadinessFailureInjection.md).
+
+Recovery behavior can be asserted directly from the existing execution reports:
+
+```go
+scenario = scenario.Expect(readiness.ExpectRecovery("orders/load/fetch",
+    readiness.RecoveryExpectation{
+        Attempts: 3, Status: pipeflow.StatusCompleted,
+        Runs: []readiness.RecoveryRunExpectation{{
+            Name: "refresh credentials",
+            Status: pipeflow.StatusCompleted,
+            Decision: pipeflow.RecoveryRetryStep,
+            OriginalError: unauthorized,
+        }},
+    }))
+```
+
+Activation counts and order are exact. Optional checks constrain Step attempts
+and status, Recovery name/status/decision, and error identity via `errors.Is`.
+An empty `Runs` list asserts no activation. Paths include Subflows and Parallel
+Branches, and missing or ambiguous paths fail. Compose with `RunSucceeds` and
+custom Scenario expectations to verify continued processing, output, nested
+repair Steps, and cleanup. See [Recovery readiness testing](adr/ReadinessRecoveryTesting.md).
+
+Circuit-breaker behavior uses the same Scenario expectation model:
+
+```go
+scenario = scenario.Expect(readiness.ExpectCircuit("orders/load/fetch",
+    readiness.CircuitExpectation{
+        Circuit: pipeflow.CircuitReport{
+            Dependency: "inventory",
+            StateBefore: pipeflow.CircuitClosed,
+            StateAfter: pipeflow.CircuitOpen,
+        },
+        Status: pipeflow.StatusFailed,
+        Error: unavailable,
+    }))
+```
+
+All circuit fields, including probe and short-circuit flags, match exactly.
+Share a breaker across scenarios to exercise opening, suppressed calls, half-open
+probes, and closing or reopening. Each expectation reads that invocation's
+recorded evidence. See [Circuit-breaker readiness testing](adr/ReadinessCircuitTesting.md).
+
+Idempotency scenarios can assert the exact guard, claim, and outcome evidence:
+
+```go
+scenario = scenario.Expect(readiness.ExpectIdempotency("orders/output/charge",
+    readiness.IdempotencyExpectation{
+        Guard: "payments",
+        Outcome: pipeflow.IdempotencyDuplicateCompleted,
+        Status: pipeflow.StatusSkipped,
+    }))
+```
+
+Share a guard/store between runs to exercise completed duplicates, concurrent
+claims, and failed/releasable claims. Optional `Error` and `StoreError` checks use
+`errors.Is`. Pair report assertions with application-owned side-effect checks;
+store durability and exactly-once behavior are not inferred from a passing
+scenario. See [Idempotency readiness testing](adr/ReadinessIdempotencyTesting.md).
+
+Seeded chaos plans compose the existing Scenario, LoadPlan, and PressurePlan:
+
+```go
+plan := readiness.NewChaosPlan(2026, 20,
+    func(ctx context.Context, c readiness.ChaosCase) (readiness.ChaosEvidence, error) {
+        random := c.Random()
+        // Build fresh fixtures, wrappers, and policies from these choices.
+        scenario, err := buildOutageAndPressureScenario(random)
+        if err != nil { return readiness.ChaosEvidence{}, err }
+        result := scenario.Run(ctx)
+        return readiness.ChaosEvidence{Scenario: &result}, nil
+    })
+result := plan.Run(context.Background())
+replay := plan.RunCase(context.Background(), 7)
+```
+
+Return exactly one `Scenario`, `Load`, or `Pressure` result. Every case retains
+its seed and existing readiness evidence; individual failures remain replayable.
+Generate conditions before launching concurrent work and describe them in the
+Scenario arrangement. Replay requires the same experiment definition and fresh
+test state. Seeds reproduce conditions, while timing and concurrent scheduling
+may vary. See [Reproducible chaos scenarios](adr/ReadinessChaosScenarios.md).
+
+Progressive integration adds explicit levels and boundary grants around the
+existing Scenario and E2E contract preflight:
+
+```go
+target := readiness.StagingSink("dev orders")
+verification := readiness.NewIntegration(scenario,
+    readiness.IntegrationStagingOutput,
+    readiness.SampleIngress("fixture"), target,
+).WithPolicy(readiness.IntegrationPolicy{
+    Allowed: []readiness.Boundary{target},
+})
+result := verification.Run(context.Background())
+```
+
+The five levels cover sample/safe output, real ingress/safe output,
+sample/staging output, real ingress/staging output, and production verification.
+Real, staging, and production boundaries require exact name-and-kind grants;
+production boundaries are valid only at level 5. Missing grants and invalid
+contracts stop execution before business functions run. Applications own actual
+adapter wiring and explicitly select each level; successful tests never
+automatically enable production writes. See
+[Progressive production integration](adr/ReadinessProgressiveIntegration.md).
+
+Untested paths remain visible even when individual scenarios pass:
+
+```go
+coverage := readiness.DetectUntestedPaths(&pipeline, reports,
+    readiness.CoverageRequirement{
+        Path: "orders/load/fetch",
+        Behavior: readiness.CoverageRecoveryFailPipeline,
+        Critical: true,
+    },
+    readiness.CoverageRequirement{
+        Path: "orders/output/charge",
+        Behavior: readiness.CoverageIdempotencyDuplicate,
+    },
+)
+```
+
+Every declared Step requires an executed attempt. Skipped, pending, or missing
+Steps remain gaps. Explicit requirements cover policy branches such as retries,
+Recovery decisions, half-open probes, and duplicate handling. Missing coverage
+produces `REVIEW`, or `FAIL` for critical gaps. Opaque custom StageItems require
+review. Supply terminal reports from the same Pipeline revision and declare
+dormant policy paths explicitly; topology descriptions do not expose them all.
+See [Untested-path detection](adr/ReadinessUntestedPaths.md).
+
+Aggregate the executed evidence into a policy-based readiness report:
+
+```go
+report := readiness.BuildReadinessReport(readiness.ReadinessPolicy{},
+    readiness.ReadinessEvidence{Name: "contracts", Result: contracts},
+    readiness.ReadinessEvidence{Name: "sample E2E", Result: e2e},
+    readiness.ReadinessEvidence{Name: "required paths", Result: coverage},
+)
+fmt.Print(report.String())
+```
+
+The default policy requires contracts, E2E, and coverage evidence. A nonempty
+`Required` list replaces that baseline with explicit application requirements,
+such as contracts, E2E, coverage, load, pressure, recovery, and integration.
+Failures, missing categories, and critical gaps produce
+`NOT READY`; unresolved behavior produces `REVIEW REQUIRED`. Accepted warnings
+produce `READY WITH WARNINGS`; otherwise satisfied requirements produce `READY`.
+`WarningsAsFailures` tightens policy, while `AllowNonCriticalGaps` explicitly
+permits coverage-only noncritical gaps as warnings. It cannot downgrade failures
+or critical gaps.
+
+The report retains metadata summaries, checks, run IDs, warning/review items,
+and gaps. Original evidence retains full execution reports. READY reflects the
+declared test scope and never enables production access. See
+[Aggregate readiness reporting](adr/ReadinessAggregateReporting.md).
+
+The initial v3 readiness scope is included in v3.0.0.
+See [Readiness Scenario Model](adr/ReadinessScenarioModel.md)
+and [Readiness Contract and Topology Inspection](adr/ReadinessContractTopology.md),
+[Readiness End-to-End Verification](adr/ReadinessEndToEnd.md), and
+[Readiness Type-Aware Payload Mutation](adr/ReadinessPayloadMutation.md), and
+[Readiness Semantic Mutation](adr/ReadinessSemanticMutation.md), and
+[Readiness Stress and Load Testing](adr/ReadinessStressLoad.md), and
+[Readiness Flow Pressure and Backpressure](adr/ReadinessFlowPressure.md).
 
 ## Design Goals
 
@@ -1533,13 +1888,11 @@ new execution modes or public API. See
 - Logging
 - Error propagation
 
-## V1 Release
+## Releases
 
-The current stable release is [`v1.0.0`](https://github.com/bbernier33/pipeflow/releases/tag/v1.0.0).
-Core v1 is complete: future compatible v1 releases may add APIs, while breaking
-changes require a new major version. Streaming, transport adapters, ETL, AI,
-and other domain capabilities can build around the frozen Core rather than
-expanding its execution model.
+The current release is [`v3.0.0`](https://github.com/bbernier33/pipeflow/releases/tag/v3.0.0).
+V1 remains available at its original module path and tag. V3 uses the semantic
+import path `/v3`; see [migration instructions](MIGRATING_V3.md).
 
 ## V1.1 Configuration
 
